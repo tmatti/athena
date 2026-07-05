@@ -27,7 +27,10 @@ func NewRouter(opts RouterOptions) http.Handler {
 	r.Get("/healthz", func(w http.ResponseWriter, req *http.Request) {
 		if opts.Healthy != nil {
 			if err := opts.Healthy(req.Context()); err != nil {
-				writeError(w, http.StatusServiceUnavailable, "unhealthy", err.Error())
+				// /healthz is unauthenticated: never echo the underlying
+				// error (it can carry DB host/user/name). Log it instead.
+				opts.Log.Error("health check failed", "error", err)
+				writeError(w, http.StatusServiceUnavailable, "unhealthy", "service unavailable")
 				return
 			}
 		}
