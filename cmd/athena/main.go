@@ -14,6 +14,7 @@ import (
 	"github.com/tmatti/athena/internal/api"
 	"github.com/tmatti/athena/internal/config"
 	"github.com/tmatti/athena/internal/db"
+	"github.com/tmatti/athena/internal/embed"
 	"github.com/tmatti/athena/internal/service"
 	"github.com/tmatti/athena/internal/store"
 )
@@ -48,7 +49,15 @@ func run() error {
 	}
 	log.Info("database ready")
 
-	brain := service.New(store.New(pool), nil, log)
+	var embedder embed.Embedder
+	if cfg.EmbeddingProvider == "openai_compatible" {
+		embedder = embed.NewOpenAICompatible(cfg.EmbeddingBaseURL, cfg.EmbeddingAPIKey, cfg.EmbeddingModel, cfg.EmbeddingDimensions)
+	} else {
+		log.Info("embedding provider disabled; search runs keyword-only")
+	}
+
+	brain := service.New(store.New(pool), embedder, log)
+	go brain.RunEmbedRetryLoop(ctx, time.Minute)
 	handlers := &api.Handlers{Brain: brain}
 
 	router := api.NewRouter(api.RouterOptions{

@@ -50,7 +50,12 @@ const candidatePool = 40
 func (s *Store) SearchMemories(ctx context.Context, p SearchParams) ([]SearchResult, error) {
 	limit := normalizeLimit(p.Limit)
 
-	args := []any{p.Query}
+	// Vector mode never references the query text, so it must not be bound:
+	// Postgres cannot infer the type of an unused parameter.
+	var args []any
+	if p.Mode != ModeVector {
+		args = append(args, p.Query)
+	}
 	tagFilter := ""
 	if p.Tag != "" {
 		args = append(args, p.Tag)
