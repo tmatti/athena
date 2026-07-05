@@ -13,6 +13,7 @@ import (
 
 	"github.com/tmatti/athena/internal/api"
 	"github.com/tmatti/athena/internal/config"
+	"github.com/tmatti/athena/internal/db"
 )
 
 func main() {
@@ -32,9 +33,23 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	if err := db.Migrate(cfg.DatabaseURL); err != nil {
+		return err
+	}
+	pool, err := db.Connect(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	if err := db.EnsureEmbeddingMeta(ctx, pool, cfg.EmbeddingProvider, cfg.EmbeddingModel, cfg.EmbeddingDimensions); err != nil {
+		return err
+	}
+	log.Info("database ready")
+
 	router := api.NewRouter(api.RouterOptions{
-		Log:    log,
-		APIKey: cfg.BrainAPIKey,
+		Log:     log,
+		APIKey:  cfg.BrainAPIKey,
+		Healthy: pool.Ping,
 	})
 
 	srv := &http.Server{
