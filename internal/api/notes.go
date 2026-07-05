@@ -37,7 +37,7 @@ func (h *Handlers) createNote(w http.ResponseWriter, r *http.Request) {
 	}
 	n, err := h.Brain.CreateNote(r.Context(), req.Title, req.Content, req.Tags)
 	if err != nil {
-		writeServiceError(w, err)
+		h.writeServiceError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, n)
@@ -51,7 +51,7 @@ func (h *Handlers) listNotes(w http.ResponseWriter, r *http.Request) {
 		Cursor: r.URL.Query().Get("cursor"),
 	})
 	if err != nil {
-		writeServiceError(w, err)
+		h.writeServiceError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, noteListResponse{Notes: notes, NextCursor: next})
@@ -64,7 +64,7 @@ func (h *Handlers) getNote(w http.ResponseWriter, r *http.Request) {
 	}
 	n, err := h.Brain.GetNote(r.Context(), id)
 	if err != nil {
-		writeServiceError(w, err)
+		h.writeServiceError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, n)
@@ -97,7 +97,7 @@ func (h *Handlers) updateNote(w http.ResponseWriter, r *http.Request) {
 		Tags:    req.Tags,
 	})
 	if err != nil {
-		writeServiceError(w, err)
+		h.writeServiceError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, n)
@@ -109,7 +109,7 @@ func (h *Handlers) deleteNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.Brain.DeleteNote(r.Context(), id); err != nil {
-		writeServiceError(w, err)
+		h.writeServiceError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

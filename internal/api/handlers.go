@@ -3,16 +3,28 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"github.com/tmatti/athena/internal/service"
+	"github.com/tmatti/athena/internal/store"
 )
 
 type Handlers struct {
 	Brain *service.Brain
+	Log   *slog.Logger
+}
+
+// logger returns h.Log, defaulting to slog.Default() so Handlers constructed
+// without a Log (e.g. in tests) don't panic.
+func (h *Handlers) logger() *slog.Logger {
+	if h.Log != nil {
+		return h.Log
+	}
+	return slog.Default()
 }
 
 func (h *Handlers) Routes(r chi.Router) {
@@ -34,10 +46,18 @@ func (h *Handlers) Routes(r chi.Router) {
 	r.Get("/tags", h.listTags)
 }
 
+const maxBodyBytes = 1 << 20 // 1 MiB
+
 func decodeBody(w http.ResponseWriter, r *http.Request, dst any) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			writeError(w, http.StatusRequestEntityTooLarge, "request_too_large", "request body must not exceed 1 MiB")
+			return false
+		}
 		writeError(w, http.StatusBadRequest, "invalid_body", err.Error())
 		return false
 	}
@@ -55,13 +75,18 @@ func pathID(w http.ResponseWriter, r *http.Request) (string, bool) {
 }
 
 // writeServiceError maps service-layer errors to HTTP responses.
-func writeServiceError(w http.ResponseWriter, err error) {
+func (h *Handlers) writeServiceError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, service.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "no such record")
 	case errors.Is(err, service.ErrInvalidSearch):
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+	case errors.Is(err, store.ErrInvalidCursor):
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 	default:
-		writeError(w, http.StatusInternalServerError, "internal", err.Error())
+		// Never echo raw internal errors to the client: they can carry DB or
+		// provider details. Log the real error server-side instead.
+		h.logger().Error("internal error", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal", "internal error")
 	}
 }

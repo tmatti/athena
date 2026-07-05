@@ -9,6 +9,9 @@ import (
 
 var ErrNotFound = errors.New("not found")
 
+// ErrInvalidCursor is returned when a pagination cursor cannot be decoded.
+var ErrInvalidCursor = errors.New("invalid cursor")
+
 type Store struct {
 	pool *pgxpool.Pool
 }

@@ -26,9 +26,11 @@ func Pool(t testing.TB) *pgxpool.Pool {
 	}
 
 	ctx := context.Background()
-	if err := db.Migrate(url); err != nil {
-		t.Fatalf("migrate test database: %v", err)
-	}
+	// Connect first (this works against an empty, not-yet-migrated database),
+	// then take the advisory lock, and only then migrate. Migrating before
+	// acquiring the lock lets parallel test packages race on schema-creation
+	// statements like `CREATE EXTENSION`, which is not idempotent under
+	// concurrent execution.
 	pool, err := db.Connect(ctx, url)
 	if err != nil {
 		t.Fatalf("connect test database: %v", err)
@@ -46,6 +48,10 @@ func Pool(t testing.TB) *pgxpool.Pool {
 		lock.Release()
 		pool.Close()
 	})
+
+	if err := db.Migrate(url); err != nil {
+		t.Fatalf("migrate test database: %v", err)
+	}
 
 	if _, err := pool.Exec(ctx, `TRUNCATE memories, notes, note_chunks; DELETE FROM embedding_meta`); err != nil {
 		t.Fatalf("truncate test database: %v", err)

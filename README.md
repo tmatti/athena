@@ -190,6 +190,12 @@ TEST_DATABASE_URL=postgres://... go test -race ./...   # test (integration tests
 
 Integration tests need `TEST_DATABASE_URL` pointing at a pgvector Postgres; they skip when it is unset. Embedding tests use a fake embedder and never hit the network.
 
+## Limitations
+
+- **Keyword search is English-tuned.** Full-text keyword search uses Postgres's `english` text-search configuration, so keyword ranking is poor for non-English content. Vector search is unaffected and still works well for other languages.
+- **Request bodies are capped at 1 MiB.** Larger request bodies are rejected with a `413` response.
+- **`null` cannot clear a nullable field via PATCH.** For a memory's `source` (and other nullable fields), JSON `null` and an omitted field are indistinguishable on the wire, so PATCH treats both as "leave unchanged." To change a value, set a new one; there is currently no way to clear it back to `null` through the API.
+
 Repository layout:
 
 ```

@@ -168,15 +168,15 @@ func encodeCursor(at time.Time, id string) string {
 func decodeCursor(cursor string) (time.Time, string, error) {
 	raw, err := base64.RawURLEncoding.DecodeString(cursor)
 	if err != nil {
-		return time.Time{}, "", fmt.Errorf("invalid cursor")
+		return time.Time{}, "", ErrInvalidCursor
 	}
 	at, id, ok := strings.Cut(string(raw), "|")
 	if !ok {
-		return time.Time{}, "", fmt.Errorf("invalid cursor")
+		return time.Time{}, "", ErrInvalidCursor
 	}
 	t, err := time.Parse(time.RFC3339Nano, at)
 	if err != nil {
-		return time.Time{}, "", fmt.Errorf("invalid cursor")
+		return time.Time{}, "", ErrInvalidCursor
 	}
 	return t, id, nil
 }

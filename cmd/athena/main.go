@@ -58,6 +58,12 @@ func run() error {
 
 	var embedder embed.Embedder
 	if cfg.EmbeddingProvider == "openai_compatible" {
+		if cfg.EmbeddingAPIKey == "" {
+			log.Warn("EMBEDDING_PROVIDER=openai_compatible with no EMBEDDING_API_KEY set; " +
+				"this is fine for keyless local endpoints (e.g. Ollama), but against hosted " +
+				"providers every write's embedding will fail and be endlessly retried; " +
+				"set EMBEDDING_PROVIDER=none for keyword-only mode if this is unintentional")
+		}
 		embedder = embed.NewOpenAICompatible(cfg.EmbeddingBaseURL, cfg.EmbeddingAPIKey, cfg.EmbeddingModel, cfg.EmbeddingDimensions)
 	} else {
 		log.Info("embedding provider disabled; search runs keyword-only")
@@ -70,7 +76,7 @@ func run() error {
 		return mcpserver.New(brain).Run(ctx, &mcp.StdioTransport{})
 	}
 
-	handlers := &api.Handlers{Brain: brain}
+	handlers := &api.Handlers{Brain: brain, Log: log}
 
 	router := api.NewRouter(api.RouterOptions{
 		Log:     log,
@@ -111,5 +117,7 @@ func newLogger(level string) *slog.Logger {
 	if err := lvl.UnmarshalText([]byte(level)); err != nil {
 		lvl = slog.LevelInfo
 	}
-	return slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: lvl}))
+	// Always log to stderr: in --stdio mode stdout carries the MCP JSON-RPC
+	// protocol stream, and log lines would corrupt it.
+	return slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: lvl}))
 }

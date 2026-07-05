@@ -36,7 +36,7 @@ func (h *Handlers) createMemory(w http.ResponseWriter, r *http.Request) {
 	}
 	m, err := h.Brain.CreateMemory(r.Context(), req.Content, req.Tags, req.Source)
 	if err != nil {
-		writeServiceError(w, err)
+		h.writeServiceError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, m)
@@ -50,7 +50,7 @@ func (h *Handlers) listMemories(w http.ResponseWriter, r *http.Request) {
 		Cursor: r.URL.Query().Get("cursor"),
 	})
 	if err != nil {
-		writeServiceError(w, err)
+		h.writeServiceError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, memoryListResponse{Memories: memories, NextCursor: next})
@@ -63,7 +63,7 @@ func (h *Handlers) getMemory(w http.ResponseWriter, r *http.Request) {
 	}
 	m, err := h.Brain.GetMemory(r.Context(), id)
 	if err != nil {
-		writeServiceError(w, err)
+		h.writeServiceError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, m)
@@ -92,7 +92,7 @@ func (h *Handlers) updateMemory(w http.ResponseWriter, r *http.Request) {
 		Source:  req.Source,
 	})
 	if err != nil {
-		writeServiceError(w, err)
+		h.writeServiceError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, m)
@@ -104,7 +104,7 @@ func (h *Handlers) deleteMemory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.Brain.DeleteMemory(r.Context(), id); err != nil {
-		writeServiceError(w, err)
+		h.writeServiceError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

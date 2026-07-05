@@ -23,7 +23,7 @@ func (h *Handlers) search(w http.ResponseWriter, r *http.Request) {
 		Limit: limit,
 	})
 	if err != nil {
-		writeServiceError(w, err)
+		h.writeServiceError(w, err)
 		return
 	}
 	if results == nil {
@@ -35,7 +35,7 @@ func (h *Handlers) search(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) listTags(w http.ResponseWriter, r *http.Request) {
 	tags, err := h.Brain.ListTags(r.Context())
 	if err != nil {
-		writeServiceError(w, err)
+		h.writeServiceError(w, err)
 		return
 	}
 	if tags == nil {
