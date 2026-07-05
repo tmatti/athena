@@ -1,0 +1,5 @@
+/athena
+/bin/
+.env
+*.test
+coverage.out
