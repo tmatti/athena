@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -11,10 +12,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/tmatti/athena/internal/api"
 	"github.com/tmatti/athena/internal/config"
 	"github.com/tmatti/athena/internal/db"
 	"github.com/tmatti/athena/internal/embed"
+	"github.com/tmatti/athena/internal/mcpserver"
 	"github.com/tmatti/athena/internal/service"
 	"github.com/tmatti/athena/internal/store"
 )
@@ -27,6 +31,9 @@ func main() {
 }
 
 func run() error {
+	stdio := flag.Bool("stdio", false, "run the MCP server over stdio instead of starting the HTTP server")
+	flag.Parse()
+
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -58,6 +65,11 @@ func run() error {
 
 	brain := service.New(store.New(pool), embedder, log)
 	go brain.RunEmbedRetryLoop(ctx, time.Minute)
+
+	if *stdio {
+		return mcpserver.New(brain).Run(ctx, &mcp.StdioTransport{})
+	}
+
 	handlers := &api.Handlers{Brain: brain}
 
 	router := api.NewRouter(api.RouterOptions{
@@ -65,6 +77,7 @@ func run() error {
 		APIKey:  cfg.BrainAPIKey,
 		Healthy: pool.Ping,
 		V1:      handlers.Routes,
+		Mounts:  map[string]http.Handler{"/mcp": mcpserver.HTTPHandler(brain)},
 	})
 
 	srv := &http.Server{
