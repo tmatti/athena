@@ -23,6 +23,13 @@ func (h *Handlers) Routes(r chi.Router) {
 		r.Patch("/{id}", h.updateMemory)
 		r.Delete("/{id}", h.deleteMemory)
 	})
+	r.Route("/notes", func(r chi.Router) {
+		r.Post("/", h.createNote)
+		r.Get("/", h.listNotes)
+		r.Get("/{id}", h.getNote)
+		r.Patch("/{id}", h.updateNote)
+		r.Delete("/{id}", h.deleteNote)
+	})
 	r.Get("/search", h.search)
 	r.Get("/tags", h.listTags)
 }
