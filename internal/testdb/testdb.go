@@ -7,6 +7,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/tmatti/athena/internal/db"
@@ -26,32 +27,35 @@ func Pool(t testing.TB) *pgxpool.Pool {
 	}
 
 	ctx := context.Background()
-	// Connect first (this works against an empty, not-yet-migrated database),
-	// then take the advisory lock, and only then migrate. Migrating before
-	// acquiring the lock lets parallel test packages race on schema-creation
+	// Take the advisory lock on a plain connection before migrating: migrating
+	// outside the lock lets parallel test packages race on schema-creation
 	// statements like `CREATE EXTENSION`, which is not idempotent under
-	// concurrent execution.
-	pool, err := db.Connect(ctx, url)
+	// concurrent execution. The lock connection must not be db.Connect — that
+	// registers pgvector types, which fails until the migration has created
+	// the vector extension on a pristine database.
+	lock, err := pgx.Connect(ctx, url)
 	if err != nil {
-		t.Fatalf("connect test database: %v", err)
-	}
-
-	lock, err := pool.Acquire(ctx)
-	if err != nil {
-		t.Fatalf("acquire lock connection: %v", err)
+		t.Fatalf("connect lock connection: %v", err)
 	}
 	if _, err := lock.Exec(ctx, `SELECT pg_advisory_lock($1)`, lockKey); err != nil {
 		t.Fatalf("acquire advisory lock: %v", err)
 	}
+	// Registered before migrate/connect so a failure there still releases the
+	// lock; closing the session releases its advisory locks.
 	t.Cleanup(func() {
 		_, _ = lock.Exec(context.Background(), `SELECT pg_advisory_unlock($1)`, lockKey)
-		lock.Release()
-		pool.Close()
+		_ = lock.Close(context.Background())
 	})
 
 	if err := db.Migrate(url); err != nil {
 		t.Fatalf("migrate test database: %v", err)
 	}
+
+	pool, err := db.Connect(ctx, url)
+	if err != nil {
+		t.Fatalf("connect test database: %v", err)
+	}
+	t.Cleanup(pool.Close)
 
 	if _, err := pool.Exec(ctx, `TRUNCATE memories, notes, note_chunks; DELETE FROM embedding_meta`); err != nil {
 		t.Fatalf("truncate test database: %v", err)
