@@ -1,0 +1,71 @@
+# Kamal 2 deployment config (https://kamal-deploy.org/docs/configuration/overview/).
+# Secrets referenced here are resolved via .kamal/secrets.
+service: athena
+image: <%= ENV.fetch("KAMAL_REGISTRY_USERNAME", "tmatti") %>/athena
+
+servers:
+  web:
+    - <%= ENV.fetch("ATHENA_SERVER_IP") %> # your server's public IP (or SSH hostname)
+
+# Runs behind Cloudflare's proxy (orange cloud): kamal-proxy terminates TLS
+# with a Cloudflare Origin CA certificate (dashboard: SSL/TLS -> Origin Server),
+# and the zone's SSL mode must be "Full (strict)". Not using Cloudflare? Replace
+# the ssl hash with `ssl: true` for plain Let's Encrypt (DNS-only record).
+# The health check gates deploys; Athena runs its embedded migrations before
+# binding the port, so a passing health check also means migrations completed.
+proxy:
+  ssl:
+    certificate_pem: CLOUDFLARE_ORIGIN_CERT # secret names from .kamal/secrets
+    private_key_pem: CLOUDFLARE_ORIGIN_KEY
+  host: <%= ENV.fetch("ATHENA_HOST") %> # e.g. athena.example.com; proxied (orange cloud) DNS record -> ATHENA_SERVER_IP
+  app_port: 8080
+  healthcheck:
+    path: /healthz # Athena has no /up endpoint (kamal-proxy's default)
+    interval: 3
+    timeout: 5
+
+ssh:
+  user: <%= ENV.fetch("ATHENA_SSH_USER", "root") %> # non-root users must be in the server's docker group
+
+registry:
+  server: ghcr.io
+  username: <%= ENV.fetch("KAMAL_REGISTRY_USERNAME", "tmatti") %>
+  password:
+    - KAMAL_REGISTRY_PASSWORD # a GitHub PAT with write:packages, via .kamal/secrets
+
+builder:
+  arch: amd64 # target VPS arch; cross-built via buildx when deploying from Apple Silicon
+
+env:
+  clear:
+    # Embedding defaults (match .env.example); any OpenAI-compatible endpoint works.
+    EMBEDDING_BASE_URL: https://openrouter.ai/api/v1
+    EMBEDDING_MODEL: openai/text-embedding-3-small
+    # EMBEDDING_PROVIDER: openai_compatible # or "none" for keyword-only search
+    # EMBEDDING_DIMENSIONS: "1536"
+    # LOG_LEVEL: info
+  secret:
+    - DATABASE_URL
+    - BRAIN_API_KEY
+    - EMBEDDING_API_KEY
+
+# Optional on-box Postgres, for running without a managed database. Set
+# ATHENA_DB_ACCESSORY=true and run `kamal accessory boot db`, then point the
+# DATABASE_URL secret at:
+#   postgres://athena:<POSTGRES_PASSWORD>@athena-db:5432/athena?sslmode=disable
+# No published port on purpose: the app reaches Postgres over the private
+# kamal docker network at host "athena-db".
+<% if ENV["ATHENA_DB_ACCESSORY"] == "true" %>
+accessories:
+  db:
+    image: pgvector/pgvector:pg17
+    host: <%= ENV.fetch("ATHENA_SERVER_IP") %> # same server as servers.web above
+    env:
+      clear:
+        POSTGRES_USER: athena
+        POSTGRES_DB: athena
+      secret:
+        - POSTGRES_PASSWORD
+    directories:
+      - data:/var/lib/postgresql/data
+<% end %>

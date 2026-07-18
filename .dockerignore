@@ -1,5 +1,7 @@
 .git
 .github
 .env
+.kamal
+config/deploy.yml
 *.md
 docker-compose.yml
