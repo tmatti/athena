@@ -172,6 +172,62 @@ docker run -p 8080:8080 \
 
 Athena runs migrations automatically at startup, so it works against any managed Postgres that supports the `pgvector` extension (for example PlanetScale for Postgres, Neon, or Supabase) — just set `DATABASE_URL` and go.
 
+### Kamal (VPS)
+
+The repo ships a [Kamal 2](https://kamal-deploy.org) setup (`config/deploy.yml` + `.kamal/secrets`) that deploys Athena behind kamal-proxy. Point the `DATABASE_URL` secret at any Postgres with pgvector — managed or self-hosted. If you want the database on the same box, an optional `pgvector/pgvector:pg17` accessory is included: set `ATHENA_DB_ACCESSORY=true`, boot it with `kamal accessory boot db`, and use `postgres://athena:<POSTGRES_PASSWORD>@athena-db:5432/athena?sslmode=disable` (it's only reachable over the private Docker network; port 5432 is never exposed).
+
+The config assumes Cloudflare's proxy sits in front: kamal-proxy serves a long-lived [Cloudflare Origin CA certificate](https://developers.cloudflare.com/ssl/origin-configuration/origin-ca/) and Cloudflare terminates public TLS. If you aren't using Cloudflare, replace the `proxy.ssl` hash with `ssl: true` to get automatic Let's Encrypt instead (requires a DNS-only record).
+
+Prerequisites:
+
+- Kamal 2 installed locally (`gem install kamal`, or the [Docker alias](https://kamal-deploy.org/docs/installation/)) and Docker running.
+- A VPS you can SSH into as root.
+- A GitHub personal access token with `write:packages` (images are pushed to GHCR).
+- Cloudflare zone setup: a **proxied** (orange cloud) A record for your subdomain pointing at the VPS; SSL/TLS mode **Full (strict)**; an Origin CA cert + key (SSL/TLS → Origin Server → Create Certificate) saved locally as PEM files.
+
+`config/deploy.yml` contains no personal values — the server, domain, and registry user are read from the environment (via ERB), and secrets are resolved through `.kamal/secrets` via the 1Password adapter (a plain env-var alternative is included there as comments). One-time 1Password setup with the [`op` CLI](https://developer.1password.com/docs/cli/):
+
+```bash
+op vault create Athena
+
+POSTGRES_PASSWORD=$(openssl rand -hex 24)
+op item create --vault Athena --category "Secure Note" --title deploy \
+  ATHENA_SERVER_IP[text]=YOUR_VPS_IP \
+  ATHENA_HOST[text]=athena.example.com \
+  KAMAL_REGISTRY_USERNAME[text]=YOUR_GITHUB_USERNAME \
+  KAMAL_REGISTRY_PASSWORD[password]=ghp_YOUR_PAT \
+  POSTGRES_PASSWORD[password]="$POSTGRES_PASSWORD" \
+  DATABASE_URL[password]="postgres://athena:${POSTGRES_PASSWORD}@athena-db:5432/athena?sslmode=disable" \
+  BRAIN_API_KEY[password]="$(openssl rand -hex 32)" \
+  EMBEDDING_API_KEY[password]=sk-or-YOUR_KEY \
+  CLOUDFLARE_ORIGIN_CERT[password]="$(cat ~/secrets/athena-origin-cert.pem)" \
+  CLOUDFLARE_ORIGIN_KEY[password]="$(cat ~/secrets/athena-origin-key.pem)"
+unset POSTGRES_PASSWORD
+```
+
+Then each deploy shell only needs the non-secret deploy target (Kamal pulls the secrets itself through `.kamal/secrets`):
+
+```bash
+export OP_ACCOUNT=my.1password.com   # your account shorthand, from `op account list`
+export ATHENA_SERVER_IP=$(op read "op://Athena/deploy/ATHENA_SERVER_IP")
+export ATHENA_HOST=$(op read "op://Athena/deploy/ATHENA_HOST")
+export KAMAL_REGISTRY_USERNAME=$(op read "op://Athena/deploy/KAMAL_REGISTRY_USERNAME")
+```
+
+First deploy (installs Docker on the host, boots the `db` accessory, builds, pushes, and deploys):
+
+```bash
+kamal setup
+```
+
+Every deploy after that:
+
+```bash
+kamal deploy
+```
+
+Kamal-proxy health-checks `/healthz` before switching traffic, and Athena runs its migrations before binding the port, so a deploy only goes live once migrations have completed. Useful commands: `kamal app logs`, `kamal accessory logs db`, `kamal rollback [version]`, and `kamal accessory boot db` if you ever need to (re)start the database on its own.
+
 **Backup** is a plain Postgres dump:
 
 ```bash
