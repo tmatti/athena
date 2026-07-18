@@ -6,7 +6,7 @@ Athena is a single-user, self-hosted "personal brain": one small Go binary that 
 
 - **Memories and notes** — atomic facts plus longer titled documents that are automatically chunked and embedded.
 - **Hybrid search** — keyword (Postgres full-text) and vector similarity combined via reciprocal rank fusion, with `hybrid`, `vector`, and `keyword` modes.
-- **Nine MCP tools** exposed over both Streamable HTTP and stdio for direct use by AI agents.
+- **Ten MCP tools** exposed over both Streamable HTTP and stdio for direct use by AI agents.
 - **Pluggable embeddings** — any OpenAI-compatible embeddings endpoint (OpenRouter by default; OpenAI, Ollama, etc. also work).
 - **Keyword-only mode** — set `EMBEDDING_PROVIDER=none` to run with no embedding provider at all; hybrid search degrades gracefully to keyword search.
 - **Resilient writes** — embedding failures never fail a write; rows persist with `embed_status='failed'` and a background loop retries.
@@ -103,6 +103,7 @@ athena --stdio
 | `remember`      | Store one atomic fact as a memory (one fact per call).                           |
 | `recall`        | Hybrid keyword + vector search over memories and notes; returns ranked results. |
 | `forget`        | Delete a memory by id.                                                           |
+| `get_memory`    | Fetch a memory's full content by id.                                            |
 | `list_memories` | List the most recent memories, optionally filtered by tag.                      |
 | `create_note`   | Create a note: a chunked, titled document for longer content.                   |
 | `get_note`      | Fetch a note's full content by id.                                              |

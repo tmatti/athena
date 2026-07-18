@@ -34,6 +34,11 @@ func registerTools(s *mcp.Server, b *service.Brain) {
 	}, forgetHandler(b))
 
 	mcp.AddTool(s, &mcp.Tool{
+		Name:        "get_memory",
+		Description: "Fetch a memory's full content by id.",
+	}, getMemoryHandler(b))
+
+	mcp.AddTool(s, &mcp.Tool{
 		Name:        "list_memories",
 		Description: "List the most recent memories, optionally filtered by tag.",
 	}, listMemoriesHandler(b))
@@ -156,6 +161,28 @@ func forgetHandler(b *service.Brain) mcp.ToolHandlerFor[forgetArgs, any] {
 			return nil, nil, notFoundOr(err, "memory", args.MemoryID)
 		}
 		return textResult(fmt.Sprintf("Deleted memory id=%s", args.MemoryID)), nil, nil
+	}
+}
+
+type getMemoryArgs struct {
+	MemoryID string `json:"memory_id" jsonschema:"the id of the memory to fetch"`
+}
+
+func getMemoryHandler(b *service.Brain) mcp.ToolHandlerFor[getMemoryArgs, any] {
+	return func(ctx context.Context, _ *mcp.CallToolRequest, args getMemoryArgs) (*mcp.CallToolResult, any, error) {
+		if err := parseUUID("memory_id", args.MemoryID); err != nil {
+			return nil, nil, err
+		}
+		m, err := b.GetMemory(ctx, args.MemoryID)
+		if err != nil {
+			return nil, nil, notFoundOr(err, "memory", args.MemoryID)
+		}
+		source := "(none)"
+		if m.Source != nil {
+			source = *m.Source
+		}
+		text := fmt.Sprintf("id=%s\ntags: %s\nsource: %s\n\n%s", m.ID, formatTags(m.Tags), source, m.Content)
+		return textResult(text), nil, nil
 	}
 }
 

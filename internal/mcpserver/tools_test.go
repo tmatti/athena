@@ -96,6 +96,45 @@ func TestCreateNoteAndGetNoteRoundTrip(t *testing.T) {
 	require.Contains(t, getText, "ops")
 }
 
+func TestRememberAndGetMemoryRoundTrip(t *testing.T) {
+	cs := testClient(t)
+
+	rememberRes := callTool(t, cs, "remember", map[string]any{
+		"content": "the user's favorite editor is neovim",
+		"tags":    []string{"prefs"},
+		"source":  "onboarding chat",
+	})
+	require.False(t, rememberRes.IsError, resultText(t, rememberRes))
+	id := extractID(t, resultText(t, rememberRes))
+
+	getRes := callTool(t, cs, "get_memory", map[string]any{"memory_id": id})
+	require.False(t, getRes.IsError, resultText(t, getRes))
+	getText := resultText(t, getRes)
+	require.Contains(t, getText, "neovim")
+	require.Contains(t, getText, "prefs")
+	require.Contains(t, getText, "onboarding chat")
+}
+
+func TestGetMemoryNonexistentReturnsToolError(t *testing.T) {
+	cs := testClient(t)
+
+	res := callTool(t, cs, "get_memory", map[string]any{
+		"memory_id": "00000000-0000-0000-0000-000000000000",
+	})
+	require.True(t, res.IsError)
+	require.Contains(t, resultText(t, res), "no memory found")
+}
+
+func TestGetMemoryInvalidUUIDReturnsToolError(t *testing.T) {
+	cs := testClient(t)
+
+	res := callTool(t, cs, "get_memory", map[string]any{
+		"memory_id": "not-a-uuid",
+	})
+	require.True(t, res.IsError)
+	require.Contains(t, resultText(t, res), "memory_id must be a valid UUID")
+}
+
 func TestForgetNonexistentReturnsToolError(t *testing.T) {
 	cs := testClient(t)
 
