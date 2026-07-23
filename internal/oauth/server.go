@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -26,6 +27,9 @@ const (
 	codeTTL    = 10 * time.Minute
 	accessTTL  = time.Hour
 	refreshTTL = 30 * 24 * time.Hour
+	// familyMaxTTL caps a grant's total lifetime across refresh rotations;
+	// after it, the owner must authorize again.
+	familyMaxTTL = 90 * 24 * time.Hour
 )
 
 type Server struct {
@@ -59,12 +63,36 @@ func (s *Server) ResourceMetadataURL() string {
 	return s.issuer + "/.well-known/oauth-protected-resource/mcp"
 }
 
+// resourceMatches compares a client-supplied RFC 8707 resource indicator
+// against the canonical MCP resource. Scheme and host compare
+// case-insensitively and a trailing slash is ignored, per the MCP spec's
+// robustness guidance — a byte-exact match would reject a client that was
+// configured with "https://HOST/mcp/".
+func (s *Server) resourceMatches(raw string) bool {
+	return canonicalResource(raw) == canonicalResource(s.Resource())
+}
+
+func canonicalResource(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	u.Scheme = strings.ToLower(u.Scheme)
+	u.Host = strings.ToLower(u.Host)
+	return strings.TrimRight(u.String(), "/")
+}
+
 // Routes registers all OAuth endpoints. They must be mounted outside the
 // bearer-auth group: clients hit them precisely because they have no token.
+// The AS metadata is served at the RFC 8414 root path plus the path-inserted
+// and OIDC-discovery variants some client versions probe first.
 func (s *Server) Routes(r chi.Router) {
 	r.Get("/.well-known/oauth-protected-resource", s.handleResourceMetadata)
 	r.Get("/.well-known/oauth-protected-resource/mcp", s.handleResourceMetadata)
 	r.Get("/.well-known/oauth-authorization-server", s.handleASMetadata)
+	r.Get("/.well-known/oauth-authorization-server/mcp", s.handleASMetadata)
+	r.Get("/.well-known/openid-configuration", s.handleASMetadata)
+	r.Get("/.well-known/openid-configuration/mcp", s.handleASMetadata)
 	r.Post("/oauth/register", s.handleRegister)
 	r.Get("/oauth/authorize", s.handleAuthorizeForm)
 	r.Post("/oauth/authorize", s.handleAuthorizeSubmit)

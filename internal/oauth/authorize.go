@@ -127,7 +127,7 @@ func (s *Server) validateAuthorize(w http.ResponseWriter, r *http.Request) (auth
 	if m := q.Get("code_challenge_method"); m != "S256" {
 		return fail("invalid_request", "code_challenge_method must be S256")
 	}
-	if req.resource != "" && req.resource != s.Resource() {
+	if req.resource != "" && !s.resourceMatches(req.resource) {
 		return fail("invalid_target", "unknown resource: "+req.resource)
 	}
 	return req, true

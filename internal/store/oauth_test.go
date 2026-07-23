@@ -30,7 +30,9 @@ func TestDeleteExpiredOAuthSweepsStaleClients(t *testing.T) {
 	require.NoError(t, err)
 	backdate(active.ID)
 	tok := OAuthTokenParams{Hash: []byte("live-token-hash"), Kind: TokenKindRefresh,
-		ClientID: active.ID, Subject: SubjectOwner, ExpiresAt: time.Now().Add(time.Hour)}
+		ClientID: active.ID, Subject: SubjectOwner,
+		FamilyID: "5d0cb1cf-9e2b-4c5a-a25c-51e40acbe798", FamilyCreatedAt: time.Now(),
+		ExpiresAt: time.Now().Add(time.Hour)}
 	require.NoError(t, s.InsertOAuthTokens(ctx, tok))
 
 	// A recent client with no grants also survives.

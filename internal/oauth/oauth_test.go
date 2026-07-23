@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/require"
@@ -71,6 +72,18 @@ func TestMetadataEndpoints(t *testing.T) {
 		require.Equal(t, []string{"https://athena.example.com"}, meta.AuthorizationServers)
 	}
 
+	// The AS metadata is also served at the path-inserted and OIDC-discovery
+	// variants that some client versions probe first.
+	for _, path := range []string{
+		"/.well-known/oauth-authorization-server/mcp",
+		"/.well-known/openid-configuration",
+		"/.well-known/openid-configuration/mcp",
+	} {
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		require.Equal(t, http.StatusOK, rec.Code, path)
+	}
+
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/.well-known/oauth-authorization-server", nil))
 	require.Equal(t, http.StatusOK, rec.Code)
@@ -90,6 +103,25 @@ func TestMetadataEndpoints(t *testing.T) {
 	require.Equal(t, "https://athena.example.com/oauth/register", as.Registration)
 	require.Equal(t, []string{"S256"}, as.ChallengeMethods)
 	require.Equal(t, []string{"authorization_code", "refresh_token"}, as.GrantTypes)
+}
+
+func TestRefreshExpiryClampedToFamilyCap(t *testing.T) {
+	familyCreated := time.Unix(1_000_000, 0)
+
+	// Early in the family's life the rolling TTL applies unchanged.
+	now := familyCreated
+	require.Equal(t, now.Add(refreshTTL), refreshExpiry(now, familyCreated))
+
+	// Near the cap the expiry is clamped to it.
+	now = familyCreated.Add(familyMaxTTL - time.Hour)
+	require.Equal(t, familyCreated.Add(familyMaxTTL), refreshExpiry(now, familyCreated))
+}
+
+func TestCanonicalResource(t *testing.T) {
+	require.Equal(t, canonicalResource("https://a.example/mcp"), canonicalResource("https://A.EXAMPLE/mcp/"))
+	require.Equal(t, canonicalResource("https://a.example/mcp"), canonicalResource("HTTPS://a.example/mcp"))
+	require.NotEqual(t, canonicalResource("https://a.example/mcp"), canonicalResource("https://a.example/MCP"))
+	require.NotEqual(t, canonicalResource("https://a.example/mcp"), canonicalResource("https://b.example/mcp"))
 }
 
 func TestTokenPrefixesDiffer(t *testing.T) {

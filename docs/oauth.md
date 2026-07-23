@@ -84,7 +84,7 @@ All OAuth endpoints are mounted **outside** the bearer-auth group:
 | Route | Purpose |
 |---|---|
 | `GET /.well-known/oauth-protected-resource[/mcp]` | RFC 9728 resource metadata |
-| `GET /.well-known/oauth-authorization-server` | RFC 8414 AS metadata |
+| `GET /.well-known/oauth-authorization-server[/mcp]` | RFC 8414 AS metadata (also aliased at `/.well-known/openid-configuration[/mcp]` for clients that probe OIDC discovery paths) |
 | `POST /oauth/register` | Dynamic client registration |
 | `GET /oauth/authorize` | Login form (validates client, redirect URI, PKCE params) |
 | `POST /oauth/authorize` | Verifies the key, issues the code, redirects back |
@@ -105,9 +105,15 @@ Athena itself, and opaque + DB lookup means instant revocation by row delete.
 |---|---|---|
 | Authorization code | 10 min | Single use (`DELETE … RETURNING`) |
 | Access token | 1 hour | Validated on every request |
-| Refresh token | 30 days | Single use; rotation issues a fresh pair |
+| Refresh token | 30 days rolling, 90 days absolute | Single use; rotation issues a fresh pair |
 
-Expired rows are swept opportunistically whenever new tokens are issued.
+Every access/refresh pair carries a `family_id` tying it to the grant it
+descends from. Rotated refresh tokens are kept as consumed tombstones until
+they expire; presenting one again is treated as theft and revokes the whole
+family, including the currently live pair. Rotation extends a grant by 30
+days at a time but never past 90 days from the original authorization —
+after that the owner logs in again. Expired rows are swept opportunistically
+whenever new tokens are issued.
 
 ### Schema (migration `00004_oauth.sql`)
 

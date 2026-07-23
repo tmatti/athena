@@ -59,18 +59,30 @@ func (s *Server) tokenFromCode(w http.ResponseWriter, r *http.Request) {
 	}
 	// RFC 8707: a resource named at the token endpoint must be one this
 	// server issued the grant for.
-	if res := f.Get("resource"); res != "" && res != s.Resource() {
+	if res := f.Get("resource"); res != "" && !s.resourceMatches(res) {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_target", "unknown resource: "+res)
 		return
 	}
 
-	s.issueTokens(w, r, code.ClientID, code.Subject, code.Scope)
+	// A fresh authorization starts a fresh token family.
+	s.issueTokens(w, r, code.ClientID, code.Subject, code.Scope, uuid.NewString(), time.Now())
 }
 
 func (s *Server) tokenFromRefresh(w http.ResponseWriter, r *http.Request) {
 	f := r.PostForm
+	// RFC 6749 §3.2.1: public clients must identify themselves. Checked
+	// before consumption so a malformed request does not burn the token.
+	clientID := f.Get("client_id")
+	if clientID == "" {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "client_id is required")
+		return
+	}
 	tok, err := s.store.ConsumeRefreshToken(r.Context(), hashToken(f.Get("refresh_token")))
-	if errors.Is(err, store.ErrNotFound) {
+	if errors.Is(err, store.ErrRefreshTokenReused) {
+		s.log.Warn("oauth: rotated refresh token reused; grant family revoked")
+		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "refresh token reuse detected; the grant has been revoked")
+		return
+	} else if errors.Is(err, store.ErrNotFound) {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "refresh token is invalid, expired, or already used")
 		return
 	} else if err != nil {
@@ -78,23 +90,24 @@ func (s *Server) tokenFromRefresh(w http.ResponseWriter, r *http.Request) {
 		writeOAuthError(w, http.StatusInternalServerError, "server_error", "internal error")
 		return
 	}
-	if cid := f.Get("client_id"); cid != "" && cid != tok.ClientID {
+	if clientID != tok.ClientID {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", "refresh token was issued to a different client")
 		return
 	}
-	s.issueTokens(w, r, tok.ClientID, tok.Subject, tok.Scope)
+	s.issueTokens(w, r, tok.ClientID, tok.Subject, tok.Scope, tok.FamilyID, tok.FamilyCreatedAt)
 }
 
-// issueTokens mints a fresh access + refresh pair and writes the RFC 6749
-// token response. Expired rows are swept opportunistically on each issuance.
-func (s *Server) issueTokens(w http.ResponseWriter, r *http.Request, clientID, subject, scope string) {
+// issueTokens mints a fresh access + refresh pair in the given family and
+// writes the RFC 6749 token response. Expired rows are swept opportunistically
+// on each issuance.
+func (s *Server) issueTokens(w http.ResponseWriter, r *http.Request, clientID, subject, scope, familyID string, familyCreated time.Time) {
 	access, accessHash := newToken("athat_")
 	refresh, refreshHash := newToken("athrt_")
 	now := time.Now()
 
 	err := s.store.InsertOAuthTokens(r.Context(),
-		store.OAuthTokenParams{Hash: accessHash, Kind: store.TokenKindAccess, ClientID: clientID, Subject: subject, Scope: scope, ExpiresAt: now.Add(accessTTL)},
-		store.OAuthTokenParams{Hash: refreshHash, Kind: store.TokenKindRefresh, ClientID: clientID, Subject: subject, Scope: scope, ExpiresAt: now.Add(refreshTTL)},
+		store.OAuthTokenParams{Hash: accessHash, Kind: store.TokenKindAccess, ClientID: clientID, Subject: subject, Scope: scope, FamilyID: familyID, FamilyCreatedAt: familyCreated, ExpiresAt: now.Add(accessTTL)},
+		store.OAuthTokenParams{Hash: refreshHash, Kind: store.TokenKindRefresh, ClientID: clientID, Subject: subject, Scope: scope, FamilyID: familyID, FamilyCreatedAt: familyCreated, ExpiresAt: refreshExpiry(now, familyCreated)},
 	)
 	if err != nil {
 		s.log.Error("insert oauth tokens", "error", err)
@@ -116,6 +129,17 @@ func (s *Server) issueTokens(w http.ResponseWriter, r *http.Request, clientID, s
 		resp["scope"] = scope
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// refreshExpiry clamps the rolling refresh TTL to the family's absolute cap:
+// rotation must not extend a grant's total lifetime forever, or a stolen
+// refresh chain would stay alive indefinitely as long as it kept being used.
+func refreshExpiry(now, familyCreated time.Time) time.Time {
+	exp := now.Add(refreshTTL)
+	if cap := familyCreated.Add(familyMaxTTL); exp.After(cap) {
+		return cap
+	}
+	return exp
 }
 
 // verifyPKCE checks code_verifier against the S256 challenge recorded at

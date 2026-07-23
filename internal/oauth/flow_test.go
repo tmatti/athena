@@ -164,15 +164,120 @@ func TestFullAuthorizationCodeFlow(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &tok2))
 	require.NotEqual(t, tok.AccessToken, tok2.AccessToken)
 
+	subject, err = s.ValidateAccessToken(ctx, tok2.AccessToken)
+	require.NoError(t, err)
+	require.Equal(t, store.SubjectOwner, subject)
+
+	// Reusing the rotated refresh token is treated as theft: the request
+	// fails and the whole family — including the fresh pair — is revoked.
+	rec = exchange(t, h, url.Values{
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {tok.RefreshToken},
+		"client_id":     {clientID},
+	})
+	require.Equal(t, http.StatusBadRequest, rec.Code, "rotated refresh token must be single-use")
+	require.Contains(t, rec.Body.String(), "reuse")
+
+	_, err = s.ValidateAccessToken(ctx, tok2.AccessToken)
+	require.Error(t, err, "reuse must revoke the family's live access token")
+	rec = exchange(t, h, url.Values{
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {tok2.RefreshToken},
+		"client_id":     {clientID},
+	})
+	require.Equal(t, http.StatusBadRequest, rec.Code, "reuse must revoke the family's live refresh token")
+}
+
+func TestRefreshRequiresClientID(t *testing.T) {
+	_, h := newTestServer(t)
+	clientID := register(t, h)
+
+	verifier := "verifier-for-client-id-test-that-is-long-enough"
+	sum := sha256.Sum256([]byte(verifier))
+	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
+
+	rec := authorize(t, h, clientID, challenge, testLoginKey)
+	require.Equal(t, http.StatusFound, rec.Code)
+	loc, err := url.Parse(rec.Header().Get("Location"))
+	require.NoError(t, err)
+
+	rec = exchange(t, h, url.Values{
+		"grant_type":    {"authorization_code"},
+		"code":          {loc.Query().Get("code")},
+		"client_id":     {clientID},
+		"redirect_uri":  {testRedirect},
+		"code_verifier": {verifier},
+	})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var tok tokenResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &tok))
+
+	// Missing client_id is rejected before the token is consumed…
 	rec = exchange(t, h, url.Values{
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {tok.RefreshToken},
 	})
-	require.Equal(t, http.StatusBadRequest, rec.Code, "rotated refresh token must be single-use")
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "invalid_request")
 
-	subject, err = s.ValidateAccessToken(ctx, tok2.AccessToken)
+	// …so a corrected retry with the same token still succeeds.
+	rec = exchange(t, h, url.Values{
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {tok.RefreshToken},
+		"client_id":     {clientID},
+	})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+}
+
+func TestResourceIndicatorIsCanonicalized(t *testing.T) {
+	_, h := newTestServer(t)
+	clientID := register(t, h)
+
+	verifier := "verifier-for-resource-test-that-is-long-enough"
+	sum := sha256.Sum256([]byte(verifier))
+	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
+
+	// Trailing slash and host case differences must not fail the flow.
+	q := url.Values{
+		"response_type":         {"code"},
+		"client_id":             {clientID},
+		"redirect_uri":          {testRedirect},
+		"code_challenge":        {challenge},
+		"code_challenge_method": {"S256"},
+		"resource":              {"https://ATHENA.example.com/mcp/"},
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/oauth/authorize?"+q.Encode(), nil))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	form := q
+	form.Set("key", testLoginKey)
+	rec = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/oauth/authorize", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	h.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusFound, rec.Code, rec.Body.String())
+	loc, err := url.Parse(rec.Header().Get("Location"))
 	require.NoError(t, err)
-	require.Equal(t, store.SubjectOwner, subject)
+
+	rec = exchange(t, h, url.Values{
+		"grant_type":    {"authorization_code"},
+		"code":          {loc.Query().Get("code")},
+		"client_id":     {clientID},
+		"redirect_uri":  {testRedirect},
+		"code_verifier": {verifier},
+		"resource":      {"https://ATHENA.example.com/mcp/"},
+	})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	// A genuinely different resource still fails.
+	rec = httptest.NewRecorder()
+	q.Set("resource", "https://other.example.com/mcp")
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/oauth/authorize?"+q.Encode(), nil))
+	require.Equal(t, http.StatusFound, rec.Code)
+	loc, err = url.Parse(rec.Header().Get("Location"))
+	require.NoError(t, err)
+	require.Equal(t, "invalid_target", loc.Query().Get("error"))
 }
 
 func TestTokenExchangeRejectsBadPKCEAndTampering(t *testing.T) {

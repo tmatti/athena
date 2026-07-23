@@ -90,13 +90,20 @@ func (s *Store) ConsumeAuthCode(ctx context.Context, codeHash []byte) (AuthCode,
 	return c, nil
 }
 
+// ErrRefreshTokenReused reports redemption of a refresh token that was
+// already rotated away. The caller must treat it as credential theft: by the
+// time it is returned, every token in the same family has been revoked.
+var ErrRefreshTokenReused = errors.New("refresh token reused")
+
 type OAuthTokenParams struct {
-	Hash      []byte
-	Kind      string
-	ClientID  string
-	Subject   string
-	Scope     string
-	ExpiresAt time.Time
+	Hash            []byte
+	Kind            string
+	ClientID        string
+	Subject         string
+	Scope           string
+	FamilyID        string
+	FamilyCreatedAt time.Time
+	ExpiresAt       time.Time
 }
 
 // InsertOAuthTokens stores a set of tokens (typically one access + one
@@ -105,9 +112,9 @@ func (s *Store) InsertOAuthTokens(ctx context.Context, tokens ...OAuthTokenParam
 	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		for _, t := range tokens {
 			if _, err := tx.Exec(ctx,
-				`INSERT INTO oauth_tokens (token_hash, kind, client_id, subject, scope, expires_at)
-				 VALUES ($1, $2, $3, $4, $5, $6)`,
-				t.Hash, t.Kind, t.ClientID, t.Subject, t.Scope, t.ExpiresAt); err != nil {
+				`INSERT INTO oauth_tokens (token_hash, kind, client_id, subject, scope, family_id, family_created_at, expires_at)
+				 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+				t.Hash, t.Kind, t.ClientID, t.Subject, t.Scope, t.FamilyID, t.FamilyCreatedAt, t.ExpiresAt); err != nil {
 				return err
 			}
 		}
@@ -116,11 +123,13 @@ func (s *Store) InsertOAuthTokens(ctx context.Context, tokens ...OAuthTokenParam
 }
 
 type OAuthToken struct {
-	Kind      string
-	ClientID  string
-	Subject   string
-	Scope     string
-	ExpiresAt time.Time
+	Kind            string
+	ClientID        string
+	Subject         string
+	Scope           string
+	FamilyID        string
+	FamilyCreatedAt time.Time
+	ExpiresAt       time.Time
 }
 
 // GetAccessToken returns a live access token by hash, or ErrNotFound.
@@ -136,15 +145,29 @@ func (s *Store) GetAccessToken(ctx context.Context, tokenHash []byte) (OAuthToke
 	return t, err
 }
 
-// ConsumeRefreshToken atomically deletes and returns a live refresh token so
-// each refresh token can only be used once (rotation).
+// ConsumeRefreshToken atomically marks a live refresh token consumed and
+// returns it, so each refresh token can only be redeemed once (rotation).
+// The consumed row is kept as a tombstone until it expires: a consumed hash
+// presented again means the rotated token leaked, so the whole family is
+// revoked and ErrRefreshTokenReused returned.
 func (s *Store) ConsumeRefreshToken(ctx context.Context, tokenHash []byte) (OAuthToken, error) {
 	var t OAuthToken
 	err := s.pool.QueryRow(ctx,
-		`DELETE FROM oauth_tokens WHERE token_hash = $1 AND kind = 'refresh'
-		 RETURNING kind, client_id, subject, scope, expires_at`,
-		tokenHash).Scan(&t.Kind, &t.ClientID, &t.Subject, &t.Scope, &t.ExpiresAt)
+		`UPDATE oauth_tokens SET consumed_at = now()
+		 WHERE token_hash = $1 AND kind = 'refresh' AND consumed_at IS NULL
+		 RETURNING kind, client_id, subject, scope, family_id, family_created_at, expires_at`,
+		tokenHash).Scan(&t.Kind, &t.ClientID, &t.Subject, &t.Scope, &t.FamilyID, &t.FamilyCreatedAt, &t.ExpiresAt)
 	if errors.Is(err, pgx.ErrNoRows) {
+		var family string
+		ferr := s.pool.QueryRow(ctx,
+			`SELECT family_id FROM oauth_tokens WHERE token_hash = $1 AND kind = 'refresh'`,
+			tokenHash).Scan(&family)
+		if ferr == nil {
+			if _, derr := s.pool.Exec(ctx, `DELETE FROM oauth_tokens WHERE family_id = $1`, family); derr != nil {
+				return OAuthToken{}, derr
+			}
+			return OAuthToken{}, ErrRefreshTokenReused
+		}
 		return OAuthToken{}, ErrNotFound
 	}
 	if err != nil {
