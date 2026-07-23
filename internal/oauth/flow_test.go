@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/require"
@@ -269,6 +270,62 @@ func TestLoginPageSecurityHeadersAndRedirectHost(t *testing.T) {
 		require.Equal(t, v, rec.Header().Get(k), k)
 	}
 	require.Contains(t, rec.Body.String(), "claude.ai")
+}
+
+func TestLoginAttemptsAreRateLimited(t *testing.T) {
+	s, h := newTestServer(t)
+	clientID := register(t, h)
+
+	// Two attempts allowed, no refill: deterministic exhaustion.
+	s.loginLimiter = &limiter{tokens: 2, burst: 2, rate: 0, now: time.Now}
+
+	rec := authorize(t, h, clientID, "a-challenge", "wrong-key")
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+	rec = authorize(t, h, clientID, "a-challenge", "wrong-key")
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+
+	// Bucket empty: even the correct key is rejected until tokens refill.
+	rec = authorize(t, h, clientID, "a-challenge", testLoginKey)
+	require.Equal(t, http.StatusTooManyRequests, rec.Code)
+	require.Contains(t, rec.Body.String(), "Too many attempts")
+}
+
+func TestRegistrationIsRateLimitedAndCapped(t *testing.T) {
+	s, h := newTestServer(t)
+
+	post := func(body string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/oauth/register", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+
+	// Too many redirect URIs in one registration.
+	uris := make([]string, maxRedirectURIs+1)
+	for i := range uris {
+		uris[i] = "https://a.example/cb"
+	}
+	body, err := json.Marshal(map[string]any{"redirect_uris": uris})
+	require.NoError(t, err)
+	rec := post(string(body))
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "too many redirect_uris")
+
+	// Overlong client name.
+	body, err = json.Marshal(map[string]any{
+		"redirect_uris": []string{"https://a.example/cb"},
+		"client_name":   strings.Repeat("x", maxClientNameLen+1),
+	})
+	require.NoError(t, err)
+	rec = post(string(body))
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "client_name")
+
+	// Exhausted bucket: registration is refused outright.
+	s.registerLimiter = &limiter{tokens: 0, burst: 1, rate: 0, now: time.Now}
+	rec = post(`{"redirect_uris":["https://a.example/cb"]}`)
+	require.Equal(t, http.StatusTooManyRequests, rec.Code)
 }
 
 func TestAuthorizeRejectsUnregisteredRedirectAndBadParams(t *testing.T) {

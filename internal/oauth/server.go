@@ -33,10 +33,22 @@ type Server struct {
 	issuer   string // public base URL, no trailing slash
 	loginKey string // the resource owner's credential (BRAIN_API_KEY)
 	log      *slog.Logger
+
+	// Both endpoints are unauthenticated by nature, so attempt volume is
+	// bounded here rather than by credentials.
+	loginLimiter    *limiter // key attempts on POST /oauth/authorize
+	registerLimiter *limiter // client registrations
 }
 
 func New(st *store.Store, issuer, loginKey string, log *slog.Logger) *Server {
-	return &Server{store: st, issuer: strings.TrimRight(issuer, "/"), loginKey: loginKey, log: log}
+	return &Server{
+		store:           st,
+		issuer:          strings.TrimRight(issuer, "/"),
+		loginKey:        loginKey,
+		log:             log,
+		loginLimiter:    newLimiter(10, 2),
+		registerLimiter: newLimiter(10, 1),
+	}
 }
 
 // Resource is the canonical RFC 8707 resource identifier of the MCP endpoint.

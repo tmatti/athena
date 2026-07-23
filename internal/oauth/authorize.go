@@ -156,6 +156,14 @@ func (s *Server) handleAuthorizeSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The per-attempt sleep below slows a single connection, but attempts run
+	// concurrently, so the bucket is what actually bounds guess volume.
+	if !s.loginLimiter.allow() {
+		s.log.Warn("oauth authorize: rate limited", "client_id", req.client.ID)
+		s.renderLogin(w, http.StatusTooManyRequests, req, "Too many attempts. Wait a minute and try again.")
+		return
+	}
+
 	key := r.PostForm.Get("key")
 	if subtle.ConstantTimeCompare([]byte(key), []byte(s.loginKey)) != 1 {
 		// Blunt brute force: this endpoint is unauthenticated by nature.

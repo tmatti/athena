@@ -6,6 +6,11 @@ import (
 	"net/url"
 )
 
+const (
+	maxRedirectURIs  = 10
+	maxClientNameLen = 100
+)
+
 type registrationRequest struct {
 	RedirectURIs []string `json:"redirect_uris"`
 	ClientName   string   `json:"client_name"`
@@ -16,6 +21,13 @@ type registrationRequest struct {
 // PKCE instead. Requested auth methods are overridden to "none" (the RFC
 // allows the server to substitute registration values).
 func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
+	// Registration is open and writes a row, so bound its volume and size:
+	// unlimited anonymous registrations are a slow disk-fill vector.
+	if !s.registerLimiter.allow() {
+		writeOAuthError(w, http.StatusTooManyRequests, "temporarily_unavailable", "too many registration requests; try again later")
+		return
+	}
+
 	var req registrationRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_client_metadata", "request body must be a JSON client metadata document")
@@ -23,6 +35,14 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(req.RedirectURIs) == 0 {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_redirect_uri", "redirect_uris is required")
+		return
+	}
+	if len(req.RedirectURIs) > maxRedirectURIs {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_redirect_uri", "too many redirect_uris")
+		return
+	}
+	if len(req.ClientName) > maxClientNameLen {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_client_metadata", "client_name is too long")
 		return
 	}
 	for _, u := range req.RedirectURIs {

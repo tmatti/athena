@@ -69,7 +69,13 @@ how store queries scope by it.
 Authenticating the resource owner at `/oauth/authorize` reuses
 `BRAIN_API_KEY` as the login credential: one secret to manage, and it is
 exactly as sensitive as what it already protects. Failed attempts get a
-constant-time compare plus a short sleep to blunt brute force.
+constant-time compare plus a short sleep, and key attempts and client
+registrations are each bounded by a global token bucket (attempts run
+concurrently, so a per-request sleep alone bounds nothing). The bucket is
+global rather than per-IP on purpose — a single-user server behind a proxy
+can't trust peer addresses, and the worst case is the owner briefly waiting
+out an attacker's exhausted bucket. Registrations are also capped in size,
+and clients older than 30 days holding no code or token are swept.
 
 ### Endpoints
 

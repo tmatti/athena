@@ -156,12 +156,20 @@ func (s *Store) ConsumeRefreshToken(ctx context.Context, tokenHash []byte) (OAut
 	return t, nil
 }
 
-// DeleteExpiredOAuth sweeps expired codes and tokens. Called opportunistically
-// when new tokens are issued; the tables are tiny for a single-user server.
+// DeleteExpiredOAuth sweeps expired codes and tokens, plus registered clients
+// that are old and hold no grant at all — registration is open, so abandoned
+// rows would otherwise accumulate forever. Called opportunistically when new
+// tokens are issued; the tables are tiny for a single-user server.
 func (s *Store) DeleteExpiredOAuth(ctx context.Context) error {
 	if _, err := s.pool.Exec(ctx, `DELETE FROM oauth_auth_codes WHERE expires_at <= now()`); err != nil {
 		return err
 	}
-	_, err := s.pool.Exec(ctx, `DELETE FROM oauth_tokens WHERE expires_at <= now()`)
+	if _, err := s.pool.Exec(ctx, `DELETE FROM oauth_tokens WHERE expires_at <= now()`); err != nil {
+		return err
+	}
+	_, err := s.pool.Exec(ctx, `DELETE FROM oauth_clients c
+		WHERE c.created_at < now() - interval '30 days'
+		  AND NOT EXISTS (SELECT 1 FROM oauth_tokens t WHERE t.client_id = c.id)
+		  AND NOT EXISTS (SELECT 1 FROM oauth_auth_codes a WHERE a.client_id = c.id)`)
 	return err
 }
