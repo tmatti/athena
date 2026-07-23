@@ -228,6 +228,49 @@ func TestTokenExchangeRejectsBadPKCEAndTampering(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
+func TestLoginPageSecurityHeadersAndRedirectHost(t *testing.T) {
+	_, h := newTestServer(t)
+	clientID := register(t, h)
+
+	wantHeaders := map[string]string{
+		"Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'",
+		"X-Frame-Options":         "DENY",
+		"X-Content-Type-Options":  "nosniff",
+		"Referrer-Policy":         "no-referrer",
+	}
+
+	q := url.Values{
+		"response_type":         {"code"},
+		"client_id":             {clientID},
+		"redirect_uri":          {testRedirect},
+		"state":                 {"st4te"},
+		"code_challenge":        {"a-challenge"},
+		"code_challenge_method": {"S256"},
+	}
+
+	// GET form: headers present, and the consent page names the redirect host.
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/oauth/authorize?"+q.Encode(), nil))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	for k, v := range wantHeaders {
+		require.Equal(t, v, rec.Header().Get(k), k)
+	}
+	require.Contains(t, rec.Body.String(), "claude.ai")
+
+	// Wrong-key POST re-renders the form and must carry the headers too.
+	form := q
+	form.Set("key", "wrong-key")
+	rec = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/oauth/authorize", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	h.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusUnauthorized, rec.Code, rec.Body.String())
+	for k, v := range wantHeaders {
+		require.Equal(t, v, rec.Header().Get(k), k)
+	}
+	require.Contains(t, rec.Body.String(), "claude.ai")
+}
+
 func TestAuthorizeRejectsUnregisteredRedirectAndBadParams(t *testing.T) {
 	_, h := newTestServer(t)
 	clientID := register(t, h)

@@ -29,6 +29,7 @@ var loginPage = template.Must(template.New("login").Parse(`<!doctype html>
   strong{color:#20282b}
   input[type=password]{width:100%;box-sizing:border-box;padding:10px;font-size:15px;border:1px solid #c6d0cd;border-radius:8px;margin-bottom:14px}
   button{width:100%;padding:10px;font-size:15px;border:0;border-radius:8px;background:#0b7261;color:#fff;cursor:pointer}
+  .dest{background:#eef3f1;border:1px solid #d9e0de;border-radius:8px;padding:8px 12px;font-size:13.5px;margin-bottom:14px}
   .err{background:#fbeae7;border:1px solid #e0b9b1;color:#a8453a;border-radius:8px;padding:8px 12px;font-size:13.5px;margin-bottom:14px}
 </style>
 </head>
@@ -36,6 +37,7 @@ var loginPage = template.Must(template.New("login").Parse(`<!doctype html>
 <main>
   <h1>Authorize {{if .ClientName}}{{.ClientName}}{{else}}this application{{end}}</h1>
   <p><strong>{{if .ClientName}}{{.ClientName}}{{else}}The application{{end}}</strong> is requesting full access to your Athena brain — memories, notes, and search. Enter your brain key to allow it.</p>
+  <p class="dest">After you approve, you'll be redirected to <strong>{{.RedirectHost}}</strong>.</p>
   {{if .Error}}<div class="err">{{.Error}}</div>{{end}}
   <form method="post" action="/oauth/authorize">
     <input type="hidden" name="response_type" value="code">
@@ -58,6 +60,7 @@ type loginPageData struct {
 	ClientName    string
 	ClientID      string
 	RedirectURI   string
+	RedirectHost  string
 	State         string
 	CodeChallenge string
 	Scope         string
@@ -190,13 +193,30 @@ func (s *Server) handleAuthorizeSubmit(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) renderLogin(w http.ResponseWriter, status int, req authorizeRequest, errMsg string) {
+	// The redirect URI is already validated against the client's registration;
+	// showing its host lets the owner catch a phishing client whose consent
+	// page is otherwise pixel-identical.
+	var host string
+	if u, err := url.Parse(req.redirectURI); err == nil {
+		host = u.Host
+	}
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
+	// The login page must never be framed (clickjacking) or run any script:
+	// the CSP allows only the single inline <style> block. No form-action
+	// directive — Chrome enforces it against the redirect that follows the
+	// POST, which would block the 302 back to the client's callback.
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.WriteHeader(status)
 	_ = loginPage.Execute(w, loginPageData{
 		ClientName:    req.client.Name,
 		ClientID:      req.client.ID,
 		RedirectURI:   req.redirectURI,
+		RedirectHost:  host,
 		State:         req.state,
 		CodeChallenge: req.codeChallenge,
 		Scope:         req.scope,
