@@ -48,6 +48,10 @@ env:
     - DATABASE_URL
     - BRAIN_API_KEY
     - EMBEDDING_API_KEY
+    # Public HTTPS origin (e.g. https://athena.example.com). Enables OAuth for
+    # MCP clients; leave unset for static-key-only. Sourced via .kamal/secrets
+    # so no deployment-specific hostname lives in this file.
+    - PUBLIC_BASE_URL
 
 # Optional on-box Postgres, for running without a managed database. Set
 # ATHENA_DB_ACCESSORY=true and run `kamal accessory boot db`, then point the
