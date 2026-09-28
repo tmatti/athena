@@ -79,9 +79,7 @@ func (h *Handlers) writeServiceError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, service.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "no such record")
-	case errors.Is(err, service.ErrInvalidSearch):
-		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
-	case errors.Is(err, store.ErrInvalidCursor):
+	case errors.Is(err, service.ErrInvalidInput), errors.Is(err, store.ErrInvalidCursor):
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 	default:
 		// Never echo raw internal errors to the client: they can carry DB or

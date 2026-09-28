@@ -58,22 +58,33 @@ func (s *Store) ListPendingEmbeds(ctx context.Context, limit int) ([]PendingEmbe
 	})
 }
 
+const setChunkEmbeddingSQL = `UPDATE note_chunks
+	SET embedding = $2, embed_status = 'ok', embed_attempts = 0, embed_last_attempt_at = NULL
+	WHERE id = $1 AND content = $3`
+
 // SetChunkEmbedding stores the embedding only if the chunk's content still
 // matches what was embedded. A 0-row result is not an error: the row changed
 // or was deleted while the embedding was in flight, and its fresh pending
 // state will be re-embedded later.
 func (s *Store) SetChunkEmbedding(ctx context.Context, id, content string, vec pgvector.Vector) error {
-	_, err := s.pool.Exec(ctx,
-		`UPDATE note_chunks
-		 SET embedding = $2, embed_status = 'ok', embed_attempts = 0, embed_last_attempt_at = NULL
-		 WHERE id = $1 AND content = $3`, id, vec, content)
+	_, err := s.pool.Exec(ctx, setChunkEmbeddingSQL, id, vec, content)
 	return err
 }
 
-func (s *Store) MarkChunkEmbedFailed(ctx context.Context, id string) error {
+// SetChunkEmbeddings applies SetChunkEmbedding to each ref (paired with
+// vecs[i]) in a single round trip.
+func (s *Store) SetChunkEmbeddings(ctx context.Context, refs []ChunkRef, vecs []pgvector.Vector) error {
+	batch := &pgx.Batch{}
+	for i, r := range refs {
+		batch.Queue(setChunkEmbeddingSQL, r.ID, vecs[i], r.Content)
+	}
+	return s.pool.SendBatch(ctx, batch).Close()
+}
+
+func (s *Store) MarkChunksEmbedFailed(ctx context.Context, ids ...string) error {
 	_, err := s.pool.Exec(ctx,
 		`UPDATE note_chunks
 		 SET embed_status = 'failed', embed_attempts = embed_attempts + 1, embed_last_attempt_at = now()
-		 WHERE id = $1`, id)
+		 WHERE id = ANY($1)`, ids)
 	return err
 }

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/pgvector/pgvector-go"
@@ -16,6 +17,21 @@ import (
 )
 
 var ErrNotFound = store.ErrNotFound
+
+// ErrInvalidInput matches every error caused by bad caller input. Such errors
+// carry a message that is safe to return to the client verbatim.
+var ErrInvalidInput = errors.New("invalid input")
+
+// inputError is a client-safe validation message that matches ErrInvalidInput.
+type inputError string
+
+func (e inputError) Error() string        { return string(e) }
+func (e inputError) Is(target error) bool { return target == ErrInvalidInput }
+
+// ErrInvalidSearch reports a missing query or an unknown mode or type.
+var ErrInvalidSearch error = inputError("invalid search parameters")
+
+func blank(s string) bool { return strings.TrimSpace(s) == "" }
 
 const embedTimeout = 10 * time.Second
 
@@ -30,6 +46,9 @@ func New(st *store.Store, embedder embed.Embedder, log *slog.Logger) *Brain {
 }
 
 func (b *Brain) CreateMemory(ctx context.Context, content string, tags []string, source *string) (store.Memory, error) {
+	if blank(content) {
+		return store.Memory{}, inputError("content is required")
+	}
 	m, err := b.store.CreateMemory(ctx, content, tags, source)
 	if err != nil {
 		return store.Memory{}, err
@@ -46,6 +65,12 @@ func (b *Brain) ListMemories(ctx context.Context, p store.ListMemoriesParams) ([
 }
 
 func (b *Brain) UpdateMemory(ctx context.Context, id string, p store.UpdateMemoryParams) (store.Memory, error) {
+	switch {
+	case p.Content == nil && p.Tags == nil && p.Source == nil:
+		return store.Memory{}, inputError("nothing to update: provide content, tags, and/or source")
+	case p.Content != nil && blank(*p.Content):
+		return store.Memory{}, inputError("content cannot be empty")
+	}
 	m, contentChanged, err := b.store.UpdateMemory(ctx, id, p)
 	if err != nil {
 		return store.Memory{}, err
@@ -96,8 +121,6 @@ type SearchParams struct {
 	Tag   string
 	Limit int
 }
-
-var ErrInvalidSearch = errors.New("invalid search parameters")
 
 func (b *Brain) Search(ctx context.Context, p SearchParams) ([]store.SearchResult, error) {
 	if p.Query == "" {
@@ -166,14 +189,7 @@ func (b *Brain) Search(ctx context.Context, p SearchParams) ([]store.SearchResul
 	}
 
 	sort.SliceStable(results, func(i, j int) bool { return results[i].Score > results[j].Score })
-	limit := p.Limit
-	if limit <= 0 {
-		limit = 10
-	}
-	if limit > 50 {
-		limit = 50
-	}
-	if len(results) > limit {
+	if limit := store.NormalizeSearchLimit(p.Limit); len(results) > limit {
 		results = results[:limit]
 	}
 	return results, nil

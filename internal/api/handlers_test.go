@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/tmatti/athena/internal/service"
 	"github.com/tmatti/athena/internal/store"
 )
 
@@ -32,6 +34,20 @@ func TestWriteServiceErrorInvalidCursor(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 	body := decodeErrorBody(t, rec)
 	require.Equal(t, "invalid_request", body.Error.Code)
+}
+
+func TestCreateNoteBlankTitleIsBadRequest(t *testing.T) {
+	// Validation happens in the service before any store access.
+	h := &Handlers{Brain: service.New(nil, nil, slog.New(slog.DiscardHandler))}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/notes", strings.NewReader(`{"title":" ","content":"body"}`))
+
+	h.createNote(rec, req)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	body := decodeErrorBody(t, rec)
+	require.Equal(t, "invalid_request", body.Error.Code)
+	require.Equal(t, "title and content are required", body.Error.Message)
 }
 
 func TestWriteServiceErrorDefaultHidesInternalDetails(t *testing.T) {

@@ -112,5 +112,5 @@ func (b *Brain) markEmbedFailed(ctx context.Context, p store.PendingEmbed) error
 	if p.Kind == "memory" {
 		return b.store.MarkMemoryEmbedFailed(ctx, p.ID)
 	}
-	return b.store.MarkChunkEmbedFailed(ctx, p.ID)
+	return b.store.MarkChunksEmbedFailed(ctx, p.ID)
 }

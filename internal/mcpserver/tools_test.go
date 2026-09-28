@@ -185,3 +185,20 @@ func indexAfter(s, marker string) int {
 	}
 	return -1
 }
+
+func TestUpdateNoteRejectsBlankFields(t *testing.T) {
+	cs := testClient(t)
+
+	createRes := callTool(t, cs, "create_note", map[string]any{"title": "Title", "content": "Body text."})
+	require.False(t, createRes.IsError, resultText(t, createRes))
+	id := strings.TrimPrefix(strings.SplitN(resultText(t, createRes), "\n", 2)[0], "Created note id=")
+
+	for _, args := range []map[string]any{
+		{"note_id": id},
+		{"note_id": id, "title": "  "},
+		{"note_id": id, "content": ""},
+	} {
+		res := callTool(t, cs, "update_note", args)
+		require.True(t, res.IsError, "args %v", args)
+	}
+}

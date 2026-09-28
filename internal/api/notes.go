@@ -3,7 +3,6 @@ package api
 import (
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/tmatti/athena/internal/service"
 	"github.com/tmatti/athena/internal/store"
@@ -29,10 +28,6 @@ type noteListResponse struct {
 func (h *Handlers) createNote(w http.ResponseWriter, r *http.Request) {
 	var req noteCreateRequest
 	if !decodeBody(w, r, &req) {
-		return
-	}
-	if strings.TrimSpace(req.Title) == "" || strings.TrimSpace(req.Content) == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "title and content are required")
 		return
 	}
 	n, err := h.Brain.CreateNote(r.Context(), req.Title, req.Content, req.Tags)
@@ -77,18 +72,6 @@ func (h *Handlers) updateNote(w http.ResponseWriter, r *http.Request) {
 	}
 	var req noteUpdateRequest
 	if !decodeBody(w, r, &req) {
-		return
-	}
-	if req.Title == nil && req.Content == nil && req.Tags == nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "nothing to update")
-		return
-	}
-	if req.Content != nil && strings.TrimSpace(*req.Content) == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "content cannot be empty")
-		return
-	}
-	if req.Title != nil && strings.TrimSpace(*req.Title) == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "title cannot be empty")
 		return
 	}
 	n, err := h.Brain.UpdateNote(r.Context(), id, service.UpdateNoteParams{

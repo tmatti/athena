@@ -3,7 +3,6 @@ package api
 import (
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/tmatti/athena/internal/store"
 )
@@ -28,10 +27,6 @@ type memoryListResponse struct {
 func (h *Handlers) createMemory(w http.ResponseWriter, r *http.Request) {
 	var req memoryCreateRequest
 	if !decodeBody(w, r, &req) {
-		return
-	}
-	if strings.TrimSpace(req.Content) == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "content is required")
 		return
 	}
 	m, err := h.Brain.CreateMemory(r.Context(), req.Content, req.Tags, req.Source)
@@ -76,14 +71,6 @@ func (h *Handlers) updateMemory(w http.ResponseWriter, r *http.Request) {
 	}
 	var req memoryUpdateRequest
 	if !decodeBody(w, r, &req) {
-		return
-	}
-	if req.Content == nil && req.Tags == nil && req.Source == nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "nothing to update")
-		return
-	}
-	if req.Content != nil && strings.TrimSpace(*req.Content) == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "content cannot be empty")
 		return
 	}
 	m, err := h.Brain.UpdateMemory(r.Context(), id, store.UpdateMemoryParams{

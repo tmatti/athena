@@ -96,9 +96,6 @@ type rememberArgs struct {
 
 func rememberHandler(b *service.Brain) mcp.ToolHandlerFor[rememberArgs, any] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, args rememberArgs) (*mcp.CallToolResult, any, error) {
-		if strings.TrimSpace(args.Content) == "" {
-			return nil, nil, errors.New("content is required")
-		}
 		var source *string
 		if args.Source != "" {
 			source = &args.Source
@@ -216,9 +213,6 @@ type createNoteArgs struct {
 
 func createNoteHandler(b *service.Brain) mcp.ToolHandlerFor[createNoteArgs, any] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, args createNoteArgs) (*mcp.CallToolResult, any, error) {
-		if strings.TrimSpace(args.Title) == "" || strings.TrimSpace(args.Content) == "" {
-			return nil, nil, errors.New("title and content are required")
-		}
 		n, err := b.CreateNote(ctx, args.Title, args.Content, args.Tags)
 		if err != nil {
 			return nil, nil, err
@@ -257,9 +251,6 @@ func updateNoteHandler(b *service.Brain) mcp.ToolHandlerFor[updateNoteArgs, any]
 	return func(ctx context.Context, _ *mcp.CallToolRequest, args updateNoteArgs) (*mcp.CallToolResult, any, error) {
 		if err := parseUUID("note_id", args.NoteID); err != nil {
 			return nil, nil, err
-		}
-		if args.Title == nil && args.Content == nil && args.Tags == nil {
-			return nil, nil, errors.New("nothing to update: provide title, content, and/or tags")
 		}
 		n, err := b.UpdateNote(ctx, args.NoteID, service.UpdateNoteParams{
 			Title:   args.Title,

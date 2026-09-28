@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -86,4 +87,19 @@ func TestBearerAuthTokenValidator(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusUnauthorized, rec.Code)
 	require.Equal(t, `Bearer resource_metadata="`+metadataURL+`"`, rec.Header().Get("WWW-Authenticate"))
+}
+
+func TestRequestLoggerPreservesFlush(t *testing.T) {
+	// The MCP SDK flushes each SSE event through http.ResponseController;
+	// the logging wrapper must not hide the underlying Flusher.
+	var flushErr error
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("data: x\n\n"))
+		flushErr = http.NewResponseController(w).Flush()
+	})
+	rec := httptest.NewRecorder()
+	RequestLogger(slog.New(slog.DiscardHandler))(next).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/mcp", nil))
+
+	require.NoError(t, flushErr)
+	require.True(t, rec.Flushed)
 }
