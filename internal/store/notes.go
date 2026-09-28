@@ -81,18 +81,18 @@ func (s *Store) CreateNote(ctx context.Context, title, content string, tags []st
 	return note, refs, nil
 }
 
+// insertChunks inserts all chunks in one statement, numbering them in order.
 func insertChunks(ctx context.Context, tx pgx.Tx, noteID string, chunks []string) ([]ChunkRef, error) {
-	refs := make([]ChunkRef, 0, len(chunks))
-	for i, c := range chunks {
-		var id string
-		if err := tx.QueryRow(ctx,
-			`INSERT INTO note_chunks (note_id, idx, content) VALUES ($1, $2, $3) RETURNING id`,
-			noteID, i, c).Scan(&id); err != nil {
-			return nil, err
-		}
-		refs = append(refs, ChunkRef{ID: id, Content: c})
+	rows, err := tx.Query(ctx,
+		`INSERT INTO note_chunks (note_id, idx, content)
+		 SELECT $1, (c.ord - 1)::int, c.content
+		 FROM unnest($2::text[]) WITH ORDINALITY AS c(content, ord)
+		 RETURNING id, content`,
+		noteID, chunks)
+	if err != nil {
+		return nil, err
 	}
-	return refs, nil
+	return pgx.CollectRows(rows, pgx.RowToStructByPos[ChunkRef])
 }
 
 func (s *Store) GetNote(ctx context.Context, id string) (Note, error) {
@@ -178,13 +178,20 @@ func (s *Store) UpdateNote(ctx context.Context, id string, p UpdateNoteParams) (
 		sets = append(sets, fmt.Sprintf(`tags = $%d`, len(args)))
 	}
 
+	// New content gets fresh pending chunks below; otherwise the existing
+	// chunks' aggregate status still holds.
+	status := noteStatusExpr
+	if p.Content != nil {
+		status = `'pending'`
+	}
+
 	var note Note
 	var refs []ChunkRef
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		var err error
 		note, err = scanNote(tx.QueryRow(ctx,
 			`UPDATE notes n SET `+strings.Join(sets, ", ")+` WHERE n.id = $1
-			 RETURNING n.id, n.title, n.content, n.tags, 'pending', n.created_at, n.updated_at`,
+			 RETURNING n.id, n.title, n.content, n.tags, `+status+`, n.created_at, n.updated_at`,
 			args...), true)
 		if err != nil {
 			return err
@@ -200,14 +207,6 @@ func (s *Store) UpdateNote(ctx context.Context, id string, p UpdateNoteParams) (
 	})
 	if err != nil {
 		return Note{}, nil, err
-	}
-	if p.Content == nil {
-		// Status was not recomputed inside the UPDATE; fetch the aggregate.
-		fresh, err := s.GetNote(ctx, id)
-		if err != nil {
-			return Note{}, nil, err
-		}
-		note.EmbedStatus = fresh.EmbedStatus
 	}
 	return note, refs, nil
 }
@@ -226,7 +225,7 @@ func (s *Store) DeleteNote(ctx context.Context, id string) error {
 // SearchNotes ranks note chunks by the requested mode and dedupes to the
 // parent note, keeping the best-scoring chunk as the snippet.
 func (s *Store) SearchNotes(ctx context.Context, p SearchParams) ([]SearchResult, error) {
-	limit := normalizeLimit(p.Limit)
+	limit := NormalizeSearchLimit(p.Limit)
 
 	var args []any
 	if p.Mode != ModeVector {
@@ -267,6 +266,7 @@ func (s *Store) SearchNotes(ctx context.Context, p SearchParams) ([]SearchResult
 				FROM note_chunks c JOIN notes n ON n.id = c.note_id,
 				     websearch_to_tsquery('english', $1) q
 				WHERE c.search @@ q%[1]s
+				ORDER BY r
 				LIMIT %[2]d
 			), vec AS (
 				SELECT c.id, row_number() OVER (ORDER BY c.embedding <=> $%[3]d) AS r

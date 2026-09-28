@@ -30,15 +30,19 @@ func EnsureEmbeddingMeta(ctx context.Context, pool *pgxpool.Pool, provider, mode
 
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
-		if dimensions != migrationDimensions {
-			if err := alterVectorColumns(ctx, pool, dimensions); err != nil {
-				return err
+		// One transaction, so a failure mid-way cannot leave the vector
+		// indexes dropped or the columns resized without a recorded config.
+		return pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
+			if dimensions != migrationDimensions {
+				if err := alterVectorColumns(ctx, tx, dimensions); err != nil {
+					return err
+				}
 			}
-		}
-		_, err := pool.Exec(ctx,
-			`INSERT INTO embedding_meta (provider, model, dimensions) VALUES ($1, $2, $3)`,
-			provider, model, dimensions)
-		return err
+			_, err := tx.Exec(ctx,
+				`INSERT INTO embedding_meta (provider, model, dimensions) VALUES ($1, $2, $3)`,
+				provider, model, dimensions)
+			return err
+		})
 	case err != nil:
 		return fmt.Errorf("read embedding_meta: %w", err)
 	}
@@ -59,7 +63,7 @@ func EnsureEmbeddingMeta(ctx context.Context, pool *pgxpool.Pool, provider, mode
 	return nil
 }
 
-func alterVectorColumns(ctx context.Context, pool *pgxpool.Pool, dimensions int) error {
+func alterVectorColumns(ctx context.Context, tx pgx.Tx, dimensions int) error {
 	stmts := []string{
 		`DROP INDEX IF EXISTS memories_embedding_idx`,
 		`DROP INDEX IF EXISTS note_chunks_embedding_idx`,
@@ -69,7 +73,7 @@ func alterVectorColumns(ctx context.Context, pool *pgxpool.Pool, dimensions int)
 		`CREATE INDEX note_chunks_embedding_idx ON note_chunks USING hnsw (embedding vector_cosine_ops)`,
 	}
 	for _, s := range stmts {
-		if _, err := pool.Exec(ctx, s); err != nil {
+		if _, err := tx.Exec(ctx, s); err != nil {
 			return fmt.Errorf("adjust embedding dimension to %d: %w", dimensions, err)
 		}
 	}

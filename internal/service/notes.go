@@ -10,6 +10,9 @@ import (
 )
 
 func (b *Brain) CreateNote(ctx context.Context, title, content string, tags []string) (store.Note, error) {
+	if blank(title) || blank(content) {
+		return store.Note{}, inputError("title and content are required")
+	}
 	note, refs, err := b.store.CreateNote(ctx, title, content, tags, chunk.Split(content))
 	if err != nil {
 		return store.Note{}, err
@@ -32,6 +35,14 @@ type UpdateNoteParams struct {
 }
 
 func (b *Brain) UpdateNote(ctx context.Context, id string, p UpdateNoteParams) (store.Note, error) {
+	switch {
+	case p.Title == nil && p.Content == nil && p.Tags == nil:
+		return store.Note{}, inputError("nothing to update: provide title, content, and/or tags")
+	case p.Title != nil && blank(*p.Title):
+		return store.Note{}, inputError("title cannot be empty")
+	case p.Content != nil && blank(*p.Content):
+		return store.Note{}, inputError("content cannot be empty")
+	}
 	storeParams := store.UpdateNoteParams{Title: p.Title, Content: p.Content, Tags: p.Tags}
 	if p.Content != nil {
 		storeParams.Chunks = chunk.Split(*p.Content)
@@ -67,18 +78,22 @@ func (b *Brain) embedChunks(ctx context.Context, note store.Note, refs []store.C
 	cancel()
 	if err != nil {
 		b.log.Warn("embed note chunks failed; will retry in background", "note_id", note.ID, "error", err)
-		for _, r := range refs {
-			if err := b.store.MarkChunkEmbedFailed(ctx, r.ID); err != nil {
-				return store.Note{}, err
-			}
+		ids := make([]string, len(refs))
+		for i, r := range refs {
+			ids[i] = r.ID
+		}
+		if err := b.store.MarkChunksEmbedFailed(ctx, ids...); err != nil {
+			return store.Note{}, err
 		}
 		note.EmbedStatus = "failed"
 		return note, nil
 	}
-	for i, r := range refs {
-		if err := b.store.SetChunkEmbedding(ctx, r.ID, r.Content, pgvector.NewVector(vecs[i])); err != nil {
-			return store.Note{}, err
-		}
+	pgvecs := make([]pgvector.Vector, len(vecs))
+	for i, v := range vecs {
+		pgvecs[i] = pgvector.NewVector(v)
+	}
+	if err := b.store.SetChunkEmbeddings(ctx, refs, pgvecs); err != nil {
+		return store.Note{}, err
 	}
 	note.EmbedStatus = "ok"
 	return note, nil

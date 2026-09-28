@@ -48,7 +48,7 @@ const candidatePool = 40
 // SearchMemories ranks memories by the requested mode: keyword (tsvector),
 // vector (cosine), or hybrid (RRF over both legs).
 func (s *Store) SearchMemories(ctx context.Context, p SearchParams) ([]SearchResult, error) {
-	limit := normalizeLimit(p.Limit)
+	limit := NormalizeSearchLimit(p.Limit)
 
 	// Vector mode never references the query text, so it must not be bound:
 	// Postgres cannot infer the type of an unused parameter.
@@ -89,6 +89,7 @@ func (s *Store) SearchMemories(ctx context.Context, p SearchParams) ([]SearchRes
 				SELECT m.id, row_number() OVER (ORDER BY ts_rank_cd(m.search, q) DESC) AS r
 				FROM memories m, websearch_to_tsquery('english', $1) q
 				WHERE m.search @@ q%[1]s
+				ORDER BY r
 				LIMIT %[2]d
 			), vec AS (
 				SELECT id, row_number() OVER (ORDER BY embedding <=> $%[3]d) AS r
@@ -118,7 +119,8 @@ func (s *Store) SearchMemories(ctx context.Context, p SearchParams) ([]SearchRes
 	})
 }
 
-func normalizeLimit(limit int) int {
+// NormalizeSearchLimit applies the search result-count default (10) and cap (50).
+func NormalizeSearchLimit(limit int) int {
 	if limit <= 0 {
 		return 10
 	}

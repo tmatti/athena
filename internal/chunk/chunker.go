@@ -72,13 +72,9 @@ func Split(text string) []string {
 			currentLen += 2
 		}
 	}
-	if len(current) > 0 {
-		// Don't emit a chunk that is nothing but carried-over overlap.
-		if len(chunks) == 0 || len(current) > 1 || current[0] != tail(chunks[len(chunks)-1], OverlapSize) {
-			chunks = append(chunks, strings.Join(current, "\n\n"))
-		}
-	}
-	return chunks
+	// Every iteration ends by appending a unit, so current always holds real
+	// content here, never just carried-over overlap.
+	return append(chunks, strings.Join(current, "\n\n"))
 }
 
 func splitParagraphs(text string) []string {

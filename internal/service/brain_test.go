@@ -89,3 +89,28 @@ func TestSearchValidation(t *testing.T) {
 	_, err = b.Search(context.Background(), SearchParams{Query: "x", Mode: "bogus"})
 	require.ErrorIs(t, err, ErrInvalidSearch)
 }
+
+func TestInputValidation(t *testing.T) {
+	// Validation runs before any store access, so no database is needed.
+	b := New(nil, nil, slog.New(slog.DiscardHandler))
+	ctx := context.Background()
+	blank, empty := "  ", ""
+
+	_, err := b.CreateMemory(ctx, " \n", nil, nil)
+	require.ErrorIs(t, err, ErrInvalidInput)
+	_, err = b.UpdateMemory(ctx, "id", store.UpdateMemoryParams{})
+	require.ErrorIs(t, err, ErrInvalidInput)
+	_, err = b.UpdateMemory(ctx, "id", store.UpdateMemoryParams{Content: &blank})
+	require.ErrorIs(t, err, ErrInvalidInput)
+	_, err = b.CreateNote(ctx, "title", "", nil)
+	require.ErrorIs(t, err, ErrInvalidInput)
+	_, err = b.UpdateNote(ctx, "id", UpdateNoteParams{})
+	require.ErrorIs(t, err, ErrInvalidInput)
+	_, err = b.UpdateNote(ctx, "id", UpdateNoteParams{Title: &blank})
+	require.ErrorIs(t, err, ErrInvalidInput)
+	_, err = b.UpdateNote(ctx, "id", UpdateNoteParams{Content: &empty})
+	require.ErrorIs(t, err, ErrInvalidInput)
+	require.EqualError(t, err, "content cannot be empty")
+
+	require.ErrorIs(t, ErrInvalidSearch, ErrInvalidInput)
+}

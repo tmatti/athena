@@ -79,3 +79,10 @@ func (w *statusWriter) WriteHeader(status int) {
 	w.status = status
 	w.ResponseWriter.WriteHeader(status)
 }
+
+// Unwrap exposes the underlying writer to http.ResponseController, which the
+// MCP SDK uses to flush each SSE event. Without it every flush fails silently
+// and streamed responses are held in the buffer until the handler returns.
+func (w *statusWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
