@@ -16,3 +16,4 @@ Single-user "personal brain" backend: Go REST API + MCP server (one binary, one 
 - Migrations are embedded goose SQL files in `migrations/`, run automatically at startup. Never edit an applied migration; add a new one.
 - Embedding failures must never fail a write: rows persist with `embed_status='failed'` and a background loop retries.
 - The embedder is an interface (`internal/embed.Embedder`); tests use `FakeEmbedder`, never the network.
+- Images live in Postgres `bytea` in the `images` table; every image has exactly one owner (memory or note, cascade-deleted with it), and store metadata queries never select the `data` column.

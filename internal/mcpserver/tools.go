@@ -35,7 +35,7 @@ func registerTools(s *mcp.Server, b *service.Brain) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_memory",
-		Description: "Fetch a memory's full content by id.",
+		Description: "Fetch a memory's full content by id, including any attached image metadata.",
 	}, getMemoryHandler(b))
 
 	mcp.AddTool(s, &mcp.Tool{
@@ -50,7 +50,7 @@ func registerTools(s *mcp.Server, b *service.Brain) {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_note",
-		Description: "Fetch a note's full content by id.",
+		Description: "Fetch a note's full content by id, including any attached image metadata.",
 	}, getNoteHandler(b))
 
 	mcp.AddTool(s, &mcp.Tool{
@@ -68,6 +68,8 @@ func registerTools(s *mcp.Server, b *service.Brain) {
 		Description: "List all tags currently in use across memories and notes, with " +
 			"counts. Check this before inventing new tags so you reuse existing vocabulary.",
 	}, listTagsHandler(b))
+
+	registerImageTools(s, b)
 }
 
 // parseUUID validates id as a UUID, returning a tool-facing error that names
@@ -182,7 +184,7 @@ func getMemoryHandler(b *service.Brain) mcp.ToolHandlerFor[getMemoryArgs, any] {
 			source = *m.Source
 		}
 		text := fmt.Sprintf("id=%s\ntags: %s\nsource: %s\n\n%s", m.ID, formatTags(m.Tags), source, m.Content)
-		return textResult(text), nil, nil
+		return textResult(text + formatImagesSection(m.Images)), nil, nil
 	}
 }
 
@@ -242,7 +244,7 @@ func getNoteHandler(b *service.Brain) mcp.ToolHandlerFor[getNoteArgs, any] {
 			return nil, nil, notFoundOr(err, "note", args.NoteID)
 		}
 		text := fmt.Sprintf("id=%s\ntitle: %s\ntags: %s\n\n%s", n.ID, n.Title, formatTags(n.Tags), n.Content)
-		return textResult(text), nil, nil
+		return textResult(text + formatImagesSection(n.Images)), nil, nil
 	}
 }
 

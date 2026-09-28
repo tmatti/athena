@@ -37,8 +37,16 @@ func (b *Brain) CreateMemory(ctx context.Context, content string, tags []string,
 	return b.embedMemory(ctx, m)
 }
 
+// GetMemory returns the memory with its image metadata attached.
 func (b *Brain) GetMemory(ctx context.Context, id string) (store.Memory, error) {
-	return b.store.GetMemory(ctx, id)
+	m, err := b.store.GetMemory(ctx, id)
+	if err != nil {
+		return store.Memory{}, err
+	}
+	if m.Images, err = b.store.ListImages(ctx, store.MemoryOwner(id)); err != nil {
+		return store.Memory{}, err
+	}
+	return m, nil
 }
 
 func (b *Brain) ListMemories(ctx context.Context, p store.ListMemoriesParams) ([]store.Memory, string, error) {

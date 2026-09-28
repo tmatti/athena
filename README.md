@@ -6,7 +6,8 @@ Athena is a single-user, self-hosted "personal brain": one small Go binary that 
 
 - **Memories and notes** — atomic facts plus longer titled documents that are automatically chunked and embedded.
 - **Hybrid search** — keyword (Postgres full-text) and vector similarity combined via reciprocal rank fusion, with `hybrid`, `vector`, and `keyword` modes.
-- **Ten MCP tools** exposed over both Streamable HTTP and stdio for direct use by AI agents.
+- **Image attachments** — attach PNG, JPEG, GIF, or WebP images (up to 10 MiB, stored in Postgres) to any memory or note.
+- **Fourteen MCP tools** exposed over both Streamable HTTP and stdio for direct use by AI agents.
 - **Pluggable embeddings** — any OpenAI-compatible embeddings endpoint (OpenRouter by default; OpenAI, Ollama, etc. also work).
 - **Keyword-only mode** — set `EMBEDDING_PROVIDER=none` to run with no embedding provider at all; hybrid search degrades gracefully to keyword search.
 - **Resilient writes** — embedding failures never fail a write; rows persist with `embed_status='failed'` and a background loop retries.
@@ -103,13 +104,17 @@ athena --stdio
 | `remember`      | Store one atomic fact as a memory (one fact per call).                           |
 | `recall`        | Hybrid keyword + vector search over memories and notes; returns ranked results. |
 | `forget`        | Delete a memory by id.                                                           |
-| `get_memory`    | Fetch a memory's full content by id.                                            |
+| `get_memory`    | Fetch a memory's full content by id (plus attached image metadata).            |
 | `list_memories` | List the most recent memories, optionally filtered by tag.                      |
 | `create_note`   | Create a note: a chunked, titled document for longer content.                   |
-| `get_note`      | Fetch a note's full content by id.                                              |
+| `get_note`      | Fetch a note's full content by id (plus attached image metadata).              |
 | `update_note`   | Update a note's title, content, and/or tags (only provided fields change).      |
 | `delete_note`   | Delete a note by id.                                                            |
 | `list_tags`     | List all tags in use across memories and notes, with counts.                    |
+| `attach_image`  | Attach a base64-encoded image to a memory or note (exactly one of `memory_id`/`note_id`; optional `filename`, `caption`). |
+| `get_image`     | Fetch an image by id: metadata plus the image itself as MCP image content.      |
+| `list_images`   | List the images attached to a memory or note.                                   |
+| `delete_image`  | Delete an image by id.                                                          |
 
 ## REST API
 
@@ -130,8 +135,32 @@ All resource endpoints live under `/v1` and require the `Authorization: Bearer $
 | DELETE | `/v1/notes/{id}`    | Delete a note.                                                   |
 | GET    | `/v1/search`        | Hybrid/vector/keyword search across memories and notes.          |
 | GET    | `/v1/tags`          | List all tags in use, with counts.                              |
+| POST   | `/v1/memories/{id}/images` | Attach an image to a memory (multipart: `file`, optional `caption`). |
+| GET    | `/v1/memories/{id}/images` | List a memory's images (metadata only).                     |
+| POST   | `/v1/notes/{id}/images`    | Attach an image to a note (multipart: `file`, optional `caption`).   |
+| GET    | `/v1/notes/{id}/images`    | List a note's images (metadata only).                       |
+| GET    | `/v1/images/{id}`          | Fetch an image's metadata.                                  |
+| GET    | `/v1/images/{id}/content`  | Download the image bytes (`ETag` / `If-None-Match` supported). |
+| PATCH  | `/v1/images/{id}`          | Set or clear an image's caption (`{"caption": "..."}` or `null`). |
+| DELETE | `/v1/images/{id}`          | Delete an image.                                            |
 
 **Search parameters** (`GET /v1/search`): `q` (query, required); `mode` = `hybrid` (default) \| `vector` \| `keyword`; `type` = `all` (default) \| `memory` \| `note`; `tag` to restrict to a single tag; `limit` for the maximum number of results.
+
+**Images** belong to exactly one memory or note and are deleted with it. Uploads are capped at 10 MiB and must be PNG, JPEG, GIF, or WebP; the type is detected from the file's bytes, not the client's `Content-Type`. `GET /v1/memories/{id}` and `GET /v1/notes/{id}` include an `images` array of metadata when any are attached. Images are not searchable yet.
+
+```bash
+# Attach an image to a memory
+curl -X POST http://localhost:8080/v1/memories/$MEMORY_ID/images \
+  -H "Authorization: Bearer $BRAIN_API_KEY" \
+  -F "file=@whiteboard.png" \
+  -F "caption=Architecture sketch from the planning session"
+
+# Download it
+curl -o whiteboard.png http://localhost:8080/v1/images/$IMAGE_ID/content \
+  -H "Authorization: Bearer $BRAIN_API_KEY"
+```
+
+Upload errors: `400 invalid_body` (not multipart, or no `file` field), `413 request_too_large` (over 10 MiB), `415 unsupported_media_type` (not an allowed image type), `404 not_found` (no such memory/note).
 
 **Errors** are returned as JSON in the shape `{"error":{"code":"...","message":"..."}}` with an appropriate HTTP status. Each memory and note chunk carries an `embed_status` of `pending`, `ok`, or `failed`; a write always succeeds even if embedding fails, and a background loop retries `failed`/`pending` rows.
 
@@ -250,8 +279,8 @@ Integration tests need `TEST_DATABASE_URL` pointing at a pgvector Postgres; they
 ## Limitations
 
 - **Keyword search is English-tuned.** Full-text keyword search uses Postgres's `english` text-search configuration, so keyword ranking is poor for non-English content. Vector search is unaffected and still works well for other languages.
-- **Request bodies are capped at 1 MiB.** Larger request bodies are rejected with a `413` response.
-- **`null` cannot clear a nullable field via PATCH.** For a memory's `source` (and other nullable fields), JSON `null` and an omitted field are indistinguishable on the wire, so PATCH treats both as "leave unchanged." To change a value, set a new one; there is currently no way to clear it back to `null` through the API.
+- **Request bodies are capped at 1 MiB** (image uploads: 10 MiB per image). Larger request bodies are rejected with a `413` response.
+- **`null` cannot clear a nullable field via PATCH** (except an image's `caption`, where `null` clears it). For a memory's `source` (and other nullable fields), JSON `null` and an omitted field are indistinguishable on the wire, so PATCH treats both as "leave unchanged." To change a value, set a new one; there is currently no way to clear it back to `null` through the API.
 
 Repository layout:
 

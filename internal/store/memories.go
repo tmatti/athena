@@ -20,6 +20,8 @@ type Memory struct {
 	EmbedStatus string    `json:"embed_status"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+	// Images is populated by the service on single-memory reads only.
+	Images []Image `json:"images,omitempty"`
 }
 
 const memoryColumns = `id, content, tags, source, embed_status, created_at, updated_at`

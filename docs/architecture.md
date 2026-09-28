@@ -13,6 +13,7 @@ then dynamic diagrams for the three flows that matter.
 - [Flow: saving a note](#flow-saving-a-note-create_note)
 - [Flow: search](#flow-search-recall)
 - [How things are referenced](#how-things-are-referenced)
+- [Images](#images)
 
 ## Level 1 — System context
 
@@ -51,11 +52,11 @@ C4Container
 
     System_Boundary(athena, "Athena binary (:8080)") {
         Container(router, "HTTP router", "chi", "Recoverer + request log. /healthz open; bearer auth (BRAIN_API_KEY) guards everything else.")
-        Container(mcp, "MCP server", "go-sdk, Streamable HTTP at /mcp (or --stdio)", "10 tools: remember, recall, get_memory, forget, list_memories, create_note, get_note, update_note, delete_note, list_tags")
-        Container(rest, "REST API", "Go, /v1/*", "CRUD for memories, notes, tags + /v1/search")
+        Container(mcp, "MCP server", "go-sdk, Streamable HTTP at /mcp (or --stdio)", "14 tools: remember, recall, get_memory, forget, list_memories, create_note, get_note, update_note, delete_note, list_tags, attach_image, get_image, list_images, delete_image")
+        Container(rest, "REST API", "Go, /v1/*", "CRUD for memories, notes, images, tags + /v1/search")
         Container(brain, "Brain service", "internal/service", "All shared logic: chunking, embedding orchestration, search fusion, validation")
         Container(retry, "Embed retry loop", "goroutine, 1-min tick", "Re-embeds pending/failed rows in batches of 32 with exponential backoff")
-        ContainerDb(pg, "PostgreSQL + pgvector", "memories, notes, note_chunks, embedding_meta", "tsvector generated columns (GIN) + vector(1536) columns (HNSW cosine)")
+        ContainerDb(pg, "PostgreSQL + pgvector", "memories, notes, note_chunks, images, embedding_meta", "tsvector generated columns (GIN) + vector(1536) columns (HNSW cosine)")
     }
     System_Ext(embedapi, "Embedding provider", "OpenAI-compatible /embeddings")
 
@@ -90,7 +91,7 @@ flowchart TD
         brain["internal/service — Brain<br/><i>CreateMemory / CreateNote / Search /<br/>UpdateNote / RunEmbedRetryLoop</i>"]
         chunk["internal/chunk<br/><i>Split(): paragraphs packed to ~1200 chars,<br/>max 3000, 300-char overlap</i>"]
         embed["internal/embed — Embedder interface<br/><i>OpenAICompatible impl; FakeEmbedder in tests;<br/>nil ⇒ keyword-only mode</i>"]
-        store["internal/store<br/><i>all SQL: memories, notes, chunks,<br/>search (RRF), pending embeds</i>"]
+        store["internal/store<br/><i>all SQL: memories, notes, chunks, images,<br/>search (RRF), pending embeds</i>"]
     end
 
     db["internal/db + migrations/<br/><i>pgx pool, goose embedded SQL,<br/>embedding_meta guard</i>"]
@@ -114,6 +115,8 @@ flowchart TD
 ```mermaid
 erDiagram
     notes ||--o{ note_chunks : "1:N, ON DELETE CASCADE"
+    memories ||--o{ images : "1:N, ON DELETE CASCADE"
+    notes ||--o{ images : "1:N, ON DELETE CASCADE"
     memories {
         uuid id PK
         text content
@@ -139,6 +142,17 @@ erDiagram
         text embed_status "pending | ok | failed"
         tsvector search "GENERATED from content, GIN index"
         int embed_attempts "backoff counter"
+    }
+    images {
+        uuid id PK
+        uuid memory_id FK "NULLable; exactly one of memory_id/note_id set (CHECK)"
+        uuid note_id FK "NULLable"
+        text filename "sanitized display name"
+        text content_type "sniffed: png | jpeg | gif | webp"
+        bigint size_bytes
+        text sha256 "hex; served as the ETag"
+        text caption "optional; slot for future vision captioning"
+        bytea data "STORAGE EXTERNAL; never read by metadata queries"
     }
 ```
 
@@ -288,8 +302,34 @@ Search results are pointers, not payloads:
    original content (never the chunks — the note row is the source of truth)
    and `get_memory(memory_id)` fetches a memory's full content, tags, and
    source; `update_note(note_id)` / `forget(memory_id)` mutate by id.
-3. Deleting a note cascades to its chunks (`ON DELETE CASCADE`); deleting a
-   memory is a single-row delete.
+3. Deleting a note cascades to its chunks and images (`ON DELETE CASCADE`);
+   deleting a memory cascades to its images.
 4. Tags are the cross-cutting reference: `list_tags` aggregates counts across
    memories and notes so agents reuse vocabulary instead of inventing it, and
    any list/search call can filter by tag.
+
+## Images
+
+Images are attachments, not first-class records: every row in `images` has
+**exactly one owner** — a memory or a note — enforced by a `CHECK` on
+`memory_id`/`note_id`, and is deleted with its owner (`ON DELETE CASCADE`).
+There are no orphan images.
+
+- **Storage:** the bytes live in Postgres as `bytea` (with `STORAGE EXTERNAL`,
+  since image formats are already compressed), so a backup is still one
+  `pg_dump`. Store queries for metadata never select `data`; only
+  `GetImageData` (the `/content` endpoint and the `get_image` tool) reads it.
+- **Validation (in `Brain.AttachImage`):** max 10 MiB; the type is sniffed
+  from the bytes with `http.DetectContentType` and must be PNG, JPEG, GIF, or
+  WebP — a client-declared type is ignored. Filenames are reduced to their
+  last path element, stripped of control characters, and capped at 255
+  characters (default `image.<ext>`). `size_bytes` and `sha256` are derived
+  from the bytes by the store; the hash doubles as the download `ETag`.
+- **Access:** REST uploads are `multipart/form-data` (the only endpoint above
+  the 1 MiB JSON body cap); MCP's `attach_image` takes base64. `get_memory` /
+  `get_note` (and the single-item REST GETs) include image metadata; list
+  endpoints do not. `get_image` returns the image as MCP image content so an
+  agent can see it.
+- **Not searchable yet:** images are not embedded or indexed. The nullable
+  `caption` column is the slot a future vision-captioning step would fill (and
+  that search could then index).

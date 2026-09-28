@@ -57,7 +57,7 @@ func Pool(t testing.TB) *pgxpool.Pool {
 	}
 	t.Cleanup(pool.Close)
 
-	if _, err := pool.Exec(ctx, `TRUNCATE memories, notes, note_chunks, oauth_clients, oauth_auth_codes, oauth_tokens; DELETE FROM embedding_meta`); err != nil {
+	if _, err := pool.Exec(ctx, `TRUNCATE memories, notes, note_chunks, images, oauth_clients, oauth_auth_codes, oauth_tokens; DELETE FROM embedding_meta`); err != nil {
 		t.Fatalf("truncate test database: %v", err)
 	}
 	return pool

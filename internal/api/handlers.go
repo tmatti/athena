@@ -34,6 +34,8 @@ func (h *Handlers) Routes(r chi.Router) {
 		r.Get("/{id}", h.getMemory)
 		r.Patch("/{id}", h.updateMemory)
 		r.Delete("/{id}", h.deleteMemory)
+		r.Post("/{id}/images", h.uploadMemoryImage)
+		r.Get("/{id}/images", h.listMemoryImages)
 	})
 	r.Route("/notes", func(r chi.Router) {
 		r.Post("/", h.createNote)
@@ -41,11 +43,21 @@ func (h *Handlers) Routes(r chi.Router) {
 		r.Get("/{id}", h.getNote)
 		r.Patch("/{id}", h.updateNote)
 		r.Delete("/{id}", h.deleteNote)
+		r.Post("/{id}/images", h.uploadNoteImage)
+		r.Get("/{id}/images", h.listNoteImages)
+	})
+	r.Route("/images", func(r chi.Router) {
+		r.Get("/{id}", h.getImage)
+		r.Get("/{id}/content", h.getImageContent)
+		r.Patch("/{id}", h.updateImage)
+		r.Delete("/{id}", h.deleteImage)
 	})
 	r.Get("/search", h.search)
 	r.Get("/tags", h.listTags)
 }
 
+// maxBodyBytes caps JSON request bodies. Image uploads use their own,
+// larger limit (see uploadImage).
 const maxBodyBytes = 1 << 20 // 1 MiB
 
 func decodeBody(w http.ResponseWriter, r *http.Request, dst any) bool {
@@ -83,6 +95,12 @@ func (h *Handlers) writeServiceError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
 	case errors.Is(err, store.ErrInvalidCursor):
 		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+	case errors.Is(err, service.ErrInvalidImageOwner):
+		writeError(w, http.StatusBadRequest, "invalid_request", err.Error())
+	case errors.Is(err, service.ErrImageTooLarge):
+		writeError(w, http.StatusRequestEntityTooLarge, "request_too_large", err.Error())
+	case errors.Is(err, service.ErrUnsupportedImageType):
+		writeError(w, http.StatusUnsupportedMediaType, "unsupported_media_type", err.Error())
 	default:
 		// Never echo raw internal errors to the client: they can carry DB or
 		// provider details. Log the real error server-side instead.
