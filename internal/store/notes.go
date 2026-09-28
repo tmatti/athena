@@ -20,6 +20,8 @@ type Note struct {
 	EmbedStatus string    `json:"embed_status"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
+	// Images is populated by the service on single-note reads only.
+	Images []Image `json:"images,omitempty"`
 }
 
 // ChunkRef identifies a chunk that still needs an embedding.

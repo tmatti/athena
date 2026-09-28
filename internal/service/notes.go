@@ -17,8 +17,16 @@ func (b *Brain) CreateNote(ctx context.Context, title, content string, tags []st
 	return b.embedChunks(ctx, note, refs)
 }
 
+// GetNote returns the note with its image metadata attached.
 func (b *Brain) GetNote(ctx context.Context, id string) (store.Note, error) {
-	return b.store.GetNote(ctx, id)
+	n, err := b.store.GetNote(ctx, id)
+	if err != nil {
+		return store.Note{}, err
+	}
+	if n.Images, err = b.store.ListImages(ctx, store.NoteOwner(id)); err != nil {
+		return store.Note{}, err
+	}
+	return n, nil
 }
 
 func (b *Brain) ListNotes(ctx context.Context, p store.ListNotesParams) ([]store.Note, string, error) {
